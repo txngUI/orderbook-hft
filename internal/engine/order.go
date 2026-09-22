@@ -1,4 +1,4 @@
-package main
+package engine
 
 // Side = côté de l'ordre : achat ou vente.
 // Go n'a pas d'enum comme Java. L'idiome : un type entier + des constantes.

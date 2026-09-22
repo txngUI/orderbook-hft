@@ -1,31 +1,34 @@
-package main
+package feed
 
-import "math/rand"
+import (
+	"math/rand"
+	"orderbook-hft/internal/engine"
+)
 
 // Generate produit n ordres déterministes à partir d'une graine.
 // Même seed → même flux : indispensable pour comparer les mesures.
-func Generate(n int, seed int64) []Order {
+func Generate(n int, seed int64) []engine.Order {
 	r := rand.New(rand.NewSource(seed)) // générateur semé
-	orders := make([]Order, n)          // slice de n Order, préallouée
+	orders := make([]engine.Order, n)          // slice de n Order, préallouée
 
 	for i := 0; i < n; i++ {
 		// côté : r.Intn(2) tire 0 ou 1
-		side := Buy
+		side := engine.Buy
 		if r.Intn(2) == 1 {
-			side = Sell
+			side = engine.Sell
 		}
 
 		// type : ~10 % d'ordres MARKET (r.Intn(10) vaut 0 une fois sur dix)
-		typ := Limit
+		typ := engine.Limit
 		if r.Intn(10) == 0 {
-			typ = Market
+			typ = engine.Market
 		}
 
 		// prix resserré autour de 100.00 (entre 99.00 et 101.00, pas de 0.05)
 		// → garantit beaucoup de matches, donc on mesure le vrai matching
 		price := 100.0 + float64(r.Intn(41)-20)*0.05
 
-		orders[i] = Order{
+		orders[i] = engine.Order{
 			ID:       uint64(i + 1),
 			Side:     side,
 			Type:     typ,

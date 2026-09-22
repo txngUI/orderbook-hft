@@ -1,6 +1,8 @@
-package main
+package engine
 
-import "testing"
+import (
+	"testing"
+)
 
 // TestSimpleCross : un achat qui croise une vente au repos produit 1 trade.
 func TestSimpleCross(t *testing.T) {

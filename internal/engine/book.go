@@ -1,4 +1,4 @@
-package main
+package engine
 
 // Book = le carnet d'ordres.
 type Book struct {
@@ -10,6 +10,8 @@ type Book struct {
 	asks   map[float64][]Order // vendeurs : on cherchera le prix le PLUS BAS
 	trades []Trade              // l'historique des transactions produites
 }
+
+func (b *Book) Trades() []Trade { return b.trades }
 
 
 // NewBook crée un carnet vide et prêt à l'emploi.
