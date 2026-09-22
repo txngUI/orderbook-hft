@@ -24,7 +24,7 @@ func Generate(n int, seed int64) []engine.Order {
 			typ = engine.Market
 		}
 
-		// prix resserré autour de 100.00 (entre 99.00 et 101.00, pas de 0.05)
+		// prix resserré 
 		// → garantit beaucoup de matches, donc on mesure le vrai matching
 		price := int64(10000 + (r.Intn(41)-20)*5)
 

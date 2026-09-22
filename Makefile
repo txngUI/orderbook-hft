@@ -8,6 +8,8 @@
 FIELDALIGN := $(shell go env GOPATH)/bin/fieldalignment
 RESULTS    := bench-results
 
+BENCHPKG   := ./internal/engine_test  
+
 ## all : vérifie la correction puis mesure le moteur.
 all: test bench
 
@@ -48,10 +50,8 @@ compare:
 bench-cache:
 	go test -bench='Contiguous|Dispersed' -benchmem ./...
 
-## profile : génère un profil CPU exploitable en flamegraph (barème axe 2).
-##   Puis :  go tool pprof -http=:8080 cpu.prof
 profile:
-	go test -bench=Matching -benchmem -cpuprofile cpu.prof ./...
+	go test -bench=Matching -cpuprofile cpu.prof $(BENCHPKG)
 	@echo ">> profil écrit dans cpu.prof — visualiser : go tool pprof -http=:8080 cpu.prof"
 
 ## bench-hyperfine : mesure PROCESSUS du binaire entier (niveau end-to-end, complément de benchstat).
