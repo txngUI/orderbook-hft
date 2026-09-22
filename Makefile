@@ -3,7 +3,9 @@
 #
 # Chemins : `./...` fonctionne que le projet soit à plat ou en cmd/ + internal/.
 
-.PHONY: all test vet bench bench-cache profile clean
+.PHONY: all test vet align bench bench-cache profile clean
+
+FIELDALIGN := $(shell go env GOPATH)/bin/fieldalignment
 
 ## all : vérifie la correction puis mesure le moteur.
 all: test bench
@@ -15,6 +17,13 @@ test:
 ## vet : analyse statique.
 vet:
 	go vet ./...
+
+## align : détecte le padding des structs (alignement mémoire, barème axe 3).
+##   Installe fieldalignment au besoin, puis l'exécute. Rien en sortie = structs déjà optimales.
+##   Réordonner automatiquement : fieldalignment -fix ./...
+align:
+	@test -x "$(FIELDALIGN)" || go install golang.org/x/tools/go/analysis/passes/fieldalignment/cmd/fieldalignment@latest
+	go vet -vettool=$(FIELDALIGN) ./...
 
 ## bench : benchmark du moteur (temps, mémoire, allocations), 10 runs pour benchstat.
 ##   Sauver un "avant" :  make bench > baseline.txt
