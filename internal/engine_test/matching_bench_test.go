@@ -1,4 +1,4 @@
-package engine
+package engine_test
 
 import (
 	"testing"
@@ -11,7 +11,7 @@ func BenchmarkMatching(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		book := engine.NewBook()
+		book := engine.NewBook(9900, 10100)
 		for j := range orders {
 			o := orders[j]
 			book.Submit(&o)

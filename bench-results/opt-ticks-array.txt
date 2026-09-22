@@ -1,0 +1,20 @@
+?   	orderbook-hft/cmd/bench	[no test files]
+PASS
+ok  	orderbook-hft/internal/engine	0.004s
+goos: linux
+goarch: amd64
+pkg: orderbook-hft/internal/engine_test
+cpu: AMD Ryzen 7 7735U with Radeon Graphics         
+BenchmarkMatching-16    	      66	  15717985 ns/op	39450164 B/op	   78088 allocs/op
+BenchmarkMatching-16    	      76	  15806245 ns/op	39450086 B/op	   78088 allocs/op
+BenchmarkMatching-16    	      68	  15346110 ns/op	39450077 B/op	   78088 allocs/op
+BenchmarkMatching-16    	      76	  15081500 ns/op	39450098 B/op	   78088 allocs/op
+BenchmarkMatching-16    	      76	  15316973 ns/op	39450080 B/op	   78088 allocs/op
+BenchmarkMatching-16    	      75	  15448557 ns/op	39450085 B/op	   78088 allocs/op
+BenchmarkMatching-16    	      69	  15258890 ns/op	39450090 B/op	   78088 allocs/op
+BenchmarkMatching-16    	      75	  15506462 ns/op	39450089 B/op	   78088 allocs/op
+BenchmarkMatching-16    	      67	  15544221 ns/op	39450081 B/op	   78088 allocs/op
+BenchmarkMatching-16    	      72	  16333256 ns/op	39450063 B/op	   78088 allocs/op
+PASS
+ok  	orderbook-hft/internal/engine_test	16.090s
+?   	orderbook-hft/internal/feed	[no test files]

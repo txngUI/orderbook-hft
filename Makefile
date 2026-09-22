@@ -3,9 +3,10 @@
 #
 # Chemins : `./...` fonctionne que le projet soit à plat ou en cmd/ + internal/.
 
-.PHONY: all test vet align bench bench-cache profile bench-hyperfine clean
+.PHONY: all test vet align bench bench-cache profile bench-hyperfine save compare clean
 
 FIELDALIGN := $(shell go env GOPATH)/bin/fieldalignment
+RESULTS    := bench-results
 
 ## all : vérifie la correction puis mesure le moteur.
 all: test bench
@@ -25,10 +26,23 @@ align:
 	@test -x "$(FIELDALIGN)" || go install golang.org/x/tools/go/analysis/passes/fieldalignment/cmd/fieldalignment@latest
 	go vet -vettool=$(FIELDALIGN) ./...
 
-## bench : benchmark du moteur (temps, mémoire, allocations), 10 runs pour benchstat.
-##   Sauver un "avant" :  make bench > baseline.txt
+## bench : benchmark du moteur (temps, mémoire, allocations), 10 runs. Affiche à l'écran.
 bench:
 	go test -bench=Matching -benchmem -count=10 ./...
+
+## save NAME=<tag> : lance le benchmark et l'archive dans bench-results/<tag>.txt (pour benchstat).
+##   Ex :  make save NAME=baseline   puis   make save NAME=opt-ticks
+save:
+	@test -n "$(NAME)" || { echo "Usage : make save NAME=<tag>"; exit 1; }
+	@mkdir -p $(RESULTS)
+	go test -bench=Matching -benchmem -count=10 ./... | tee $(RESULTS)/$(NAME).txt
+	@echo ">> archivé dans $(RESULTS)/$(NAME).txt"
+
+## compare A=<tag> B=<tag> : benchstat entre deux résultats archivés.
+##   Ex :  make compare A=baseline B=opt-ticks
+compare:
+	@test -n "$(A)" -a -n "$(B)" || { echo "Usage : make compare A=<tag> B=<tag>"; exit 1; }
+	benchstat $(RESULTS)/$(A).txt $(RESULTS)/$(B).txt
 
 ## bench-cache : expérience de localité contigu vs dispersé (le ×26).
 bench-cache:
@@ -49,6 +63,8 @@ bench-hyperfine:
 	hyperfine --warmup 5 --runs 50 './ob' --export-markdown hyperfine.md
 	@echo ">> résultats dans hyperfine.md"
 
-## clean : supprime les fichiers de mesure générés.
+## clean : supprime les fichiers ÉPHÉMÈRES (profils, binaires). Garde bench-results/ (pièces à conviction).
+##   Pour effacer aussi les résultats archivés :  rm -rf bench-results
 clean:
-	rm -f cpu.prof *.test baseline.txt opt-*.txt final.txt hyperfine.md ob ob_naif ob_opti
+	rm -f cpu.prof mem.prof *.test hyperfine.md ob ob_naif ob_opti
+	rm -f baseline.txt opt-*.txt final.txt   # anciens .txt éventuellement restés à la racine
