@@ -26,7 +26,7 @@ func Generate(n int, seed int64) []engine.Order {
 
 		// prix resserré autour de 100.00 (entre 99.00 et 101.00, pas de 0.05)
 		// → garantit beaucoup de matches, donc on mesure le vrai matching
-		price := 100.0 + float64(r.Intn(41)-20)*0.05
+		price := int64(10000 + (r.Intn(41)-20)*5)
 
 		orders[i] = engine.Order{
 			ID:       uint64(i + 1),

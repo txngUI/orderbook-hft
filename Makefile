@@ -3,7 +3,7 @@
 #
 # Chemins : `./...` fonctionne que le projet soit à plat ou en cmd/ + internal/.
 
-.PHONY: all test vet align bench bench-cache profile clean
+.PHONY: all test vet align bench bench-cache profile bench-hyperfine clean
 
 FIELDALIGN := $(shell go env GOPATH)/bin/fieldalignment
 
@@ -40,6 +40,15 @@ profile:
 	go test -bench=Matching -benchmem -cpuprofile cpu.prof ./...
 	@echo ">> profil écrit dans cpu.prof — visualiser : go tool pprof -http=:8080 cpu.prof"
 
+## bench-hyperfine : mesure PROCESSUS du binaire entier (niveau end-to-end, complément de benchstat).
+##   Installer : sudo pacman -S hyperfine
+##   Avant/après : construire 2 binaires et faire
+##     hyperfine --warmup 5 --runs 50 './ob_naif' './ob_opti' --export-markdown hyperfine.md
+bench-hyperfine:
+	go build -o ob ./cmd/bench
+	hyperfine --warmup 5 --runs 50 './ob' --export-markdown hyperfine.md
+	@echo ">> résultats dans hyperfine.md"
+
 ## clean : supprime les fichiers de mesure générés.
 clean:
-	rm -f cpu.prof *.test baseline.txt opt-*.txt final.txt
+	rm -f cpu.prof *.test baseline.txt opt-*.txt final.txt hyperfine.md ob ob_naif ob_opti

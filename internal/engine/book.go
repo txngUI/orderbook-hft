@@ -3,11 +3,11 @@ package engine
 // Book = le carnet d'ordres.
 type Book struct {
 	// naïf 
-	// bids   map[float64][]*Order 
-	bids   map[float64][]Order // acheteurs : on cherchera le prix le PLUS HAUT
+	// bids   map[int64][]*Order 
+	bids   map[int64][]Order // acheteurs : on cherchera le prix le PLUS HAUT
 	// naïf
-	// asks   map[float64][]*Order 
-	asks   map[float64][]Order // vendeurs : on cherchera le prix le PLUS BAS
+	// asks   map[int64][]*Order 
+	asks   map[int64][]Order // vendeurs : on cherchera le prix le PLUS BAS
 	trades []Trade              // l'historique des transactions produites
 }
 
@@ -18,11 +18,11 @@ func (b *Book) Trades() []Trade { return b.trades }
 func NewBook() *Book {
 	return &Book{
 		// naïf : on stocke des pointeurs vers les ordres	
-		// bids: make(map[float64][]*Order),
-		// asks: make(map[float64][]*Order),
+		// bids: make(map[int64][]*Order),
+		// asks: make(map[int64][]*Order),
 
-		bids: make(map[float64][]Order),
-		asks: make(map[float64][]Order),
+		bids: make(map[int64][]Order),
+		asks: make(map[int64][]Order),
 	}
 }
 
@@ -32,8 +32,8 @@ func NewBook() *Book {
 * @param b : le carnet d'ordres
 * @return (best, found) : le meilleur prix et un booléen qui dit s'il en existe au moins un
 **/
-func (b *Book) bestAsk() (float64, bool) {
-	best := 0.0
+func (b *Book) bestAsk() (int64, bool) {
+	var best int64
 	found := false
 
 	// NAÏF : on parcourt TOUTE la map à chaque appel → O(n).
@@ -56,8 +56,8 @@ func (b *Book) bestAsk() (float64, bool) {
 * @param b : le carnet d'ordres
 * @return (best, found) : le meilleur prix et un booléen qui dit s'il en existe au moins un
 **/
-func (b *Book) bestBid() (float64, bool) {
-	best := 0.0
+func (b *Book) bestBid() (int64, bool) {
+	var best int64
 	found := false
 
 	// NAÏF : on parcourt TOUTE la map à chaque appel → O(n).
