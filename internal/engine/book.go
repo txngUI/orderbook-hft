@@ -3,13 +3,14 @@ package engine
 // Le carnet suppose une PLAGE DE PRIX BORNÉE (fenêtre autour du prix de référence),
 // pratique classique d'un carnet HFT. Les bornes sont PARAMÉTRÉES (passées à NewBook),
 // pas codées en dur : la plage est une donnée, partagée avec le générateur.
+
 type Book struct {
 	minTick    int64
-	bids       [][]Order // index = tick - minTick ; chaque case = la file FIFO à ce prix
-	asks       [][]Order
-	// Les deux curseurs suivants pointent vers les niveaux de prix non vides les plus proches
-	bestBidIdx int // plus HAUT bid non vide ; -1 si aucun
-	bestAskIdx int // plus BAS ask non vide ; len(asks) si aucun
+	bids, asks [][]Order
+	bidsHead   []int // front FIFO par niveau bid (index du plus ancien ordre non consommé)
+	asksHead   []int // front FIFO par niveau ask
+	bestBidIdx int
+	bestAskIdx int
 	trades     []Trade
 }
 
@@ -20,10 +21,13 @@ func NewBook(minTick, maxTick int64) *Book {
 		minTick:    minTick,
 		bids:       make([][]Order, n),
 		asks:       make([][]Order, n),
+		bidsHead:   make([]int, n),
+		asksHead:   make([]int, n),
 		bestBidIdx: -1,
 		bestAskIdx: n,
 	}
 }
+
 func (b *Book) Trades() []Trade { return b.trades }
 
 func (b *Book) Submit(o *Order) {
@@ -45,15 +49,22 @@ func (b *Book) matchBuy(o *Order) {
 			break
 		}
 		level := b.asks[b.bestAskIdx]
-		resting := &level[0]
+		h := b.asksHead[b.bestAskIdx]
+		resting := &level[h]
 		qty := min(o.Quantity, resting.Quantity)
 		b.trades = append(b.trades, Trade{o.ID, resting.ID, askPrice, qty})
 		o.Quantity -= qty
 		resting.Quantity -= qty
 		if resting.Quantity == 0 {
-			b.asks[b.bestAskIdx] = level[1:]
-			for b.bestAskIdx < len(b.asks) && len(b.asks[b.bestAskIdx]) == 0 {
-				b.bestAskIdx++ // avance amortie du curseur au prochain niveau non vide
+			h++
+			if h == len(level) {             // niveau vidé → reset : le tableau est RÉUTILISÉ
+				b.asks[b.bestAskIdx] = level[:0]
+				b.asksHead[b.bestAskIdx] = 0
+				for b.bestAskIdx < len(b.asks) && len(b.asks[b.bestAskIdx]) == 0 {
+					b.bestAskIdx++
+				}
+			} else {                         // sinon on avance juste la tête
+				b.asksHead[b.bestAskIdx] = h
 			}
 		}
 	}
@@ -69,22 +80,29 @@ func (b *Book) matchBuy(o *Order) {
 func (b *Book) matchSell(o *Order) {
 	for o.Quantity > 0 {
 		if b.bestBidIdx < 0 {
-			break // plus aucun acheteur
+			break
 		}
 		bidPrice := int64(b.bestBidIdx) + b.minTick
 		if o.Type == Limit && bidPrice < o.Price {
 			break
 		}
 		level := b.bids[b.bestBidIdx]
-		resting := &level[0]
+		h := b.bidsHead[b.bestBidIdx]
+		resting := &level[h]
 		qty := min(o.Quantity, resting.Quantity)
 		b.trades = append(b.trades, Trade{resting.ID, o.ID, bidPrice, qty})
 		o.Quantity -= qty
 		resting.Quantity -= qty
 		if resting.Quantity == 0 {
-			b.bids[b.bestBidIdx] = level[1:]
-			for b.bestBidIdx >= 0 && len(b.bids[b.bestBidIdx]) == 0 {
-				b.bestBidIdx-- // avance amortie du curseur vers le bas
+			h++
+			if h == len(level) {
+				b.bids[b.bestBidIdx] = level[:0]
+				b.bidsHead[b.bestBidIdx] = 0
+				for b.bestBidIdx >= 0 && len(b.bids[b.bestBidIdx]) == 0 {
+					b.bestBidIdx--
+				}
+			} else {
+				b.bidsHead[b.bestBidIdx] = h
 			}
 		}
 	}
