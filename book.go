@@ -2,8 +2,12 @@ package main
 
 // Book = le carnet d'ordres.
 type Book struct {
-	bids   map[float64][]*Order // acheteurs : on cherchera le prix le PLUS HAUT
-	asks   map[float64][]*Order // vendeurs : on cherchera le prix le PLUS BAS
+	// naïf 
+	// bids   map[float64][]*Order 
+	bids   map[float64][]Order // acheteurs : on cherchera le prix le PLUS HAUT
+	// naïf
+	// asks   map[float64][]*Order 
+	asks   map[float64][]Order // vendeurs : on cherchera le prix le PLUS BAS
 	trades []Trade              // l'historique des transactions produites
 }
 
@@ -11,9 +15,12 @@ type Book struct {
 // NewBook crée un carnet vide et prêt à l'emploi.
 func NewBook() *Book {
 	return &Book{
-		bids: make(map[float64][]*Order),
-		asks: make(map[float64][]*Order),
-		// trades : pas besoin de make, une slice nil accepte déjà append
+		// naïf : on stocke des pointeurs vers les ordres	
+		// bids: make(map[float64][]*Order),
+		// asks: make(map[float64][]*Order),
+
+		bids: make(map[float64][]Order),
+		asks: make(map[float64][]Order),
 	}
 }
 
@@ -99,8 +106,10 @@ func (b *Book) matchBuy(o *Order) {
 		}
 
 		level := b.asks[askPrice] // la file d'ordres à ce prix
-		resting := level[0]       // FIFO : le plus ancien d'abord
+		// resting := level[0]       // la version naïve : on copie le 1er élément de la file pour le stocker dans une variable
+		resting := &level[0]       // on prend un pointeur vers le 1er élément de la file
 
+		// qty := min(o.Quantity, resting.Quantity) <-- naïf 
 		qty := min(o.Quantity, resting.Quantity) // on échange le plus petit des deux
 
 		// on enregistre la transaction
@@ -116,7 +125,7 @@ func (b *Book) matchBuy(o *Order) {
 		resting.Quantity -= qty
 
 		// si le vendeur est complètement vidé, on le retire de la file
-		if resting.Quantity == 0 {
+		if level[0].Quantity == 0 {
 			b.asks[askPrice] = level[1:] // on enlève le 1er élément
 			if len(b.asks[askPrice]) == 0 {
 				delete(b.asks, askPrice) // niveau vide → on supprime la clé
@@ -126,7 +135,8 @@ func (b *Book) matchBuy(o *Order) {
 
 	// SORTIE DE BOUCLE : s'il reste des unités ET que c'est un LIMIT → en attente
 	if o.Quantity > 0 && o.Type == Limit {
-		b.bids[o.Price] = append(b.bids[o.Price], o)
+		// b.bids[o.Price] = append(b.bids[o.Price], o) <-- version naïve
+		b.bids[o.Price] = append(b.bids[o.Price], *o) // on stocke une copie de l'ordre
 	}
 }
 
@@ -150,7 +160,8 @@ func (b *Book) matchSell(o *Order) {
 		}
 		
 		level := b.bids[bidPrice]
-		resting := level[0]
+		// resting := level[0] <-- version naïve : on copie le 1er élément de la file pour le stocker dans une variable
+		resting := &level[0] // on prend un pointeur vers le 1er élément de la file
 
 		qty := min(o.Quantity, resting.Quantity)
 
@@ -165,7 +176,7 @@ func (b *Book) matchSell(o *Order) {
 		resting.Quantity -= qty
 
 		// si l'acheteur est complètement vidé, on le retire de la file
-		if resting.Quantity == 0 {
+		if level[0].Quantity == 0 {
 			b.bids[bidPrice] = level[1:] // on enlève le 1er élément
 			if len(b.bids[bidPrice]) == 0 {
 				delete(b.bids, bidPrice) // niveau vide → on supprime la clé
@@ -175,6 +186,7 @@ func (b *Book) matchSell(o *Order) {
 
 	// SORTIE DE BOUCLE : reliquat + LIMIT → on met en attente
 	if o.Quantity > 0 && o.Type == Limit {
-		b.asks[o.Price] = append(b.asks[o.Price], o)
+		// b.asks[o.Price] = append(b.asks[o.Price], o) <-- version naïve
+		b.asks[o.Price] = append(b.asks[o.Price], *o) // on stocke une copie de l'ordre
 	}
 }
