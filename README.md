@@ -52,14 +52,36 @@ La baseline chronométrée seule : `go run ./cmd/bench`.
 ```
 orderbook-hft/
 ├── cmd/
-│   └── bench/          # point d'entrée : lanceur de baseline
+│   └── bench/
+│       └── main.go                 # point d'entrée : lanceur chronométré (binaire ./ob)
 ├── internal/
-│   ├── engine/         # cœur : Order, Book, moteur d'appariement + tests/benchmarks
-│   └── feed/           # générateur de flux d'ordres reproductible
-├── constitution.md     # règles de gouvernance technique (contraintes de perf)
-├── RAPPORT-AUDIT.md    # rapport d'audit de performance (démarche + mesures)
+│   ├── engine/                     # cœur du moteur
+│   │   ├── order.go                # types Order, Side, OrderType, Trade
+│   │   ├── book.go                 # Book indexé par tick + appariement prix-temps
+│   │   ├── book_test.go            # tests de correction (filet de sécurité)
+│   │   └── locality_test.go        # expérience de localité de cache (contigu vs dispersé)
+│   ├── engine_test/
+│   │   └── matching_bench_test.go  # BenchmarkMatching (boîte noire, 200 000 ordres)
+│   └── feed/
+│       └── generator.go            # générateur de flux d'ordres reproductible (graine fixe)
+├── bench-results/                  # benchmarks archivés par étape (entrées de benchstat)
+│   ├── baseline.txt
+│   ├── opt-cache.txt
+│   ├── opt-prealloc-trap.txt
+│   ├── opt-ticks.txt
+│   ├── opt-ticks-array.txt
+│   └── opt-zero-alloc.txt
+├── flamegraph-cpu.png              # flamegraph du profil CPU (goulot bestAsk/bestBid)
+├── hyperfine.md                    # mesure end-to-end du binaire (./ob vs ./ob_opti)
+├── Makefile                        # test, bench, profile, save, compare, clean…
+├── constitution.md                 # règles de gouvernance technique (contraintes de perf)
+├── RAPPORT-AUDIT.md                # rapport d'audit de performance (démarche + mesures)
+├── go.mod
 └── README.md
 ```
+
+Les artefacts générés (`cpu.prof`, `mem.prof`, `*.test`, `ob`, `ob_opti`) se régénèrent via le
+`Makefile` et se suppriment avec `make clean`.
 
 ## Concepts clés
 
