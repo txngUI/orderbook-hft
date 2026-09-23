@@ -21,7 +21,7 @@
   - [1.1 Banc d'essai matériel](#11-banc-dessai-matériel)
   - [1.2 Protocole de mesure](#12-protocole-de-mesure)
   - [1.3 Résultats](#13-résultats)
-    - [1.3.1 Chronométrage simple](#131-chronométrage-simple-première-mesure--séance-1)
+    - [1.3.1 Chronométrage simple](#131-chronométrage-simple-première-mesure)
     - [1.3.2 Baseline consolidée](#132-baseline-consolidée-référence-pour-toutes-les-comparaisons-avantaprès)
 - [2. Diagnostic matériel & Profiling réel — /5](#2-diagnostic-matériel--profiling-réel--5)
   - [2.1 Méthode](#21-méthode)
@@ -52,11 +52,10 @@
 
 ### Contexte et objectif du document
 
-Ce rapport constitue l'audit de performance du projet **Order Book HFT**, réalisé dans le cadre du
-cours « Optimisations & Performances Backend ». Son objectif est de **prouver, chiffres à l'appui**,
-l'amélioration des performances obtenue en appliquant successivement les leviers d'optimisation vus
-en cours (localité de cache, zéro-allocation, concurrence, etc.), en partant d'une version naïve de
-référence (_baseline_) et en mesurant chaque gain de façon reproductible.
+Ce rapport constitue l'audit de performance du projet **Order Book HFT**. Son objectif est de
+**prouver, chiffres à l'appui**, l'amélioration des performances obtenue en appliquant successivement
+des leviers d'optimisation classiques (localité de cache, zéro-allocation, concurrence, etc.), en
+partant d'une version naïve de référence (_baseline_) et en mesurant chaque gain de façon reproductible.
 
 ### Présentation du sujet
 
@@ -82,26 +81,17 @@ chaque levier fait l'objet d'un commit taggé distinct. La sortie de benchmark c
 archivée dans un fichier texte. Ainsi, n'importe quel état est reproductible (`git checkout <tag>`)
 et toute comparaison est rejouable (`benchstat <avant>.txt <après>.txt`).
 
-| Tag Git | État du projet | Sortie benchmark | Séance |
-|---|---|---|---|
-| `baseline-naive` | Version naïve de référence | `baseline.txt` | 1 |
-| `opt-cache-locality` | + disposition mémoire contiguë (fin des `[]*Order` dispersés) | `opt-cache.txt` | 2 |
-| `opt-int64-ticks` | + prix en `int64` (ticks) | `opt-ticks.txt` | 4 |
-| `opt-ticks-array` | + tableau de niveaux indexé par tick → best-price O(1) | `opt-ticks-array.txt` | 4 |
-| `opt-zero-alloc` | + index de tête (recyclage des niveaux → zéro-alloc) | `opt-zero-alloc.txt` | 4 |
-| `opt-concurrency` | + worker pool multi-symboles (parallélisme entre carnets) | speedup (§3.6) | 5 |
-| `seance-6` | + recyclage `sync.Pool` (§3.7) + profil de contention mutex (§4.2) | RAM/`parallel` | 6 |
-| `opt-int32` | + prix `int32` (`Order` 32→24 o, densité cache, §3.8) | `opt-int32.txt` | 6 |
-| `final` | version optimisée finale | `final.txt` | — |
-
-_(Convention de nommage : `opt-<levier>`. Compléter au fil des séances ; les lignes sont
-indicatives et à ajuster selon les leviers réellement appliqués.)_
-
-### Portée
-
-Ce document couvre : la spécification du banc d'essai et le protocole de mesure (§1), le diagnostic
-par profiling (§2), le journal des optimisations chiffrées (§3), les tentatives infructueuses
-assumées (§4), la synthèse comparative reproductible (§5) et la gouvernance technique (§6).
+| Tag Git | État du projet | Sortie benchmark |
+|---|---|---|
+| `baseline-naive` | Version naïve de référence | `baseline.txt` |
+| `opt-cache-locality` | + disposition mémoire contiguë (fin des `[]*Order` dispersés) | `opt-cache.txt` |
+| `opt-int64-ticks` | + prix en `int64` (ticks) | `opt-ticks.txt` |
+| `opt-ticks-array` | + tableau de niveaux indexé par tick → best-price O(1) | `opt-ticks-array.txt` |
+| `opt-zero-alloc` | + index de tête (recyclage des niveaux → zéro-alloc) | `opt-zero-alloc.txt` |
+| `opt-concurrency` | + worker pool multi-symboles (parallélisme entre carnets) | speedup |
+| `seance-6` | + recyclage `sync.Pool` + profil de contention mutex | RAM/`parallel` |
+| `opt-int32` | + prix `int32` (`Order` 32→24 o, densité cache) | `opt-int32.txt` |
+| `final` | version optimisée finale | `final.txt` |
 
 ---
 
@@ -122,7 +112,7 @@ assumées (§4), la synthèse comparative reproductible (§5) et la gouvernance 
 
 Points communs aux deux mesures :
 - **Charge :** `Generate(n, seed)` — flux d'ordres déterministe (même graine → même flux).
-- **Plage de prix :** le flux est **borné** à 99,00–101,00 € (fenêtre autour d'un prix de référence de 100,00 €). C'est une condition de mesure qui rend possible le levier §3.4 (tableau indexé par tick) ; sa contrepartie face à la fluctuation des prix est discutée au §3.4.
+- **Plage de prix :** le flux est **borné** à 99,00–101,00 € (fenêtre autour d'un prix de référence de 100,00 €). C'est une condition de mesure qui rend possible le levier du tableau indexé par tick. Sa contrepartie face à la fluctuation des prix est discutée avec ce levier.
 - **Isolation :** génération faite **hors chronomètre** ; on ne mesure que la boucle de matching.
 - **Paramètres :** n = 200 000 ordres, seed = 42.
 
@@ -135,10 +125,9 @@ La mesure a été menée en **deux niveaux de rigueur croissants** :
 
 ### 1.3 Résultats
 
-#### 1.3.1 Chronométrage simple (première mesure — Séance 1)
+#### 1.3.1 Chronométrage simple (première mesure)
 
-Première prise de mesure, volontairement minimale (objectif de la Séance 1 : obtenir un ordre de
-grandeur de référence).
+Première prise de mesure du projet initial reposée sur la baseline fait sans volonté d'optimisation mais une volonté de succès fonctionnel.
 
 | Métrique | Valeur |
 |---|---|
@@ -184,7 +173,7 @@ go test -bench=Matching -cpuprofile cpu.prof -benchtime=3s ./internal/engine_tes
 go tool pprof -top -cum cpu.prof          # top textuel
 go tool pprof -http=:8080 cpu.prof        # flamegraph interactif
 
-# Profil mémoire (voir §3.2) — où sont les allocations
+# Profil mémoire  — où sont les allocations
 go test -bench=Matching -memprofile mem.prof ./internal/engine_test
 go tool pprof -top -sample_index=alloc_objects mem.prof
 ```
@@ -212,21 +201,21 @@ _Lecture : la largeur d'une barre = sa part de temps CPU. Sous `Submit`, les pla
 (**49,7 %**) et `matchSell` couvrent presque toute la largeur. Sous chacun, la pile
 `bestAsk`/`bestBid` → `runtime.mapIterNext` → `maps.(*Iter).Next` forme un **large plateau** = le
 parcours complet de la map à chaque ordre (**O(n) « Table Scan », goulot n°1**). Les plateaux
-`growslice`/`mapassign`/`memmove` = les allocations d'`append` (cf. §3.2). Aucun autre plateau large
+`growslice`/`mapassign`/`memmove` = les allocations d'`append`. Aucun autre plateau large
 → goulot **unique et structurel** (le design `map[float64][]Order`)._
 
 ### 2.3 Identification formelle du Hot Path
 
 **Goulot n°1 — la recherche de prix en O(n).** `bestAsk` + `bestBid` cumulent **~61 % du temps CPU**,
 et leur coût est presque entièrement `maps.(*Iter).Next` (32 % en *flat*, le plus gros poste unique) :
-c'est le **parcours complet de la map à chaque ordre** — le « Table Scan » O(n) suspecté depuis la
-Séance 2, désormais **prouvé par la mesure**.
+c'est le **parcours complet de la map à chaque ordre** — le « Table Scan » O(n) suspecté dès le départ,
+désormais **prouvé par la mesure**.
 
 **Goulot n°2 — le prix en `float64`.** Le hachage des clés flottantes (`f64hash` + `aeshashbody`
 ≈ 9 %) confirme le choix naïf identifié dès l'origine : une clé `int64` (ticks) serait hachée plus vite.
 
 **Goulot n°3 — allocations & GC.** `growslice`/`memmove` (~15 %) = la croissance des slices de
-niveaux (cf. §3.2), et `gcBgMarkWorker` (~3,5 %) = la pression GC qui en découle.
+niveaux, et `gcBgMarkWorker` (~3,5 %) = la pression GC qui en découle.
 
 **Conclusion.** Le design à base de `map[float64][]Order` est la racine **commune** des trois coûts
 (scan O(n), hachage `float64`, allocations d'`append`). Le refactor `map → tableau de niveaux
@@ -237,23 +226,23 @@ justifie donc formellement ce refactor comme prochain levier prioritaire.
 
 ## 3. Journal d'optimisation & Démarche d'ingénierie — /5
 
-> _Les leviers sont présentés dans l'**ordre chronologique** d'application. La localité (§3.1) a été
-> traitée en Séance 2, **avant** le profiling formel (§2, Séance 4) : c'est précisément son gain **nul
-> sur le temps** qui a **déclenché** ce profiling, lequel a ensuite désigné le vrai goulot (le O(n),
-> §3.4). L'ordre de lecture suit donc le fil de la découverte._
+> _Les leviers sont présentés dans l'**ordre chronologique** d'application. La localité a été
+> traitée **avant** le profiling formel : c'est précisément son gain **nul sur le temps** qui a
+> **déclenché** ce profiling, lequel a ensuite désigné le vrai goulot (le O(n)). L'ordre de lecture
+> suit donc le fil de la découverte._
 
 ### 3.0 Tableau des leviers identifiés (choix naïfs de la baseline)
 
 | Choix naïf | Problème mécanique | Levier | Statut |
 |---|---|---|---|
-| `bestAsk/bestBid` par parcours complet de la map | O(n) par ordre (Table Scan) | Tableau de niveaux indexé par tick → O(1) | ✅ **fait & mesuré (§3.4) : −77 %** (goulot n°1 supprimé) |
-| `[]*Order` (pointeurs dispersés) | Cache misses + pression GC | Structs contiguës | ✅ fait & mesuré (§3.1) |
-| Prix `float64` | Arrondi + hashing lent | `int64` (ticks) | ✅ fait (§3.3) : `f64hash` éliminé du profil |
-| `level[1:]` détruit la capacité → réallocations | `growslice`/`memmove`, pression GC | Index de tête (recyclage du tableau) | ✅ **fait & mesuré (§3.5) : −99,4 % d'allocs, −31 % temps** |
+| `bestAsk/bestBid` par parcours complet de la map | O(n) par ordre (Table Scan) | Tableau de niveaux indexé par tick → O(1) | ✅ **fait & mesuré : −77 %** (goulot n°1 supprimé) |
+| `[]*Order` (pointeurs dispersés) | Cache misses + pression GC | Structs contiguës | ✅ fait & mesuré  |
+| Prix `float64` | Arrondi + hashing lent | `int64` (ticks) | ✅ fait  : `f64hash` éliminé du profil |
+| `level[1:]` détruit la capacité → réallocations | `growslice`/`memmove`, pression GC | Index de tête (recyclage du tableau) | ✅ **fait & mesuré  : −99,4 % d'allocs, −31 % temps** |
 | Padding de `Order` | < ordres par ligne de cache 64 B | Réordonner les champs | ✅ vérifié (`make align`) : structs déjà alignées (32 o), non applicable |
 | Flux tout en RAM | Empreinte O(n) | Streaming binaire | ⬜ à faire |
-| Mono-thread | 1 cœur exploité (15/16 inactifs) | Worker pool borné, parallélisme **entre carnets** | ✅ **fait & mesuré (§3.6) : ×6,35 à 8 cœurs** |
-| Allocation d'un carnet par symbole (runner parallèle) | Pression GC en multi-carnets | Recyclage via `sync.Pool` | ✅ **fait & mesuré (§3.7) : −36 % allocs, −27 % temps** |
+| Mono-thread | 1 cœur exploité (15/16 inactifs) | Worker pool borné, parallélisme **entre carnets** | ✅ **fait & mesuré  : ×6,35 à 8 cœurs** |
+| Allocation d'un carnet par symbole (runner parallèle) | Pression GC en multi-carnets | Recyclage via `sync.Pool` | ✅ **fait & mesuré : −36 % allocs, −27 % temps** |
 
 ### 3.1 Levier : localité de cache (`[]*Order` → `[]Order`)
 
@@ -288,14 +277,14 @@ fait aussi autre chose, d'où un gain réel plus faible.
 
 **Lecture critique :** le levier réduit fortement les allocations (−71 %) mais le temps ne bouge presque
 pas (−6 %). Ce n'est pas un échec : ça prouve que, sur ce carnet, les allocations ne sont **pas** le
-goulot temps. Le vrai goulot est ailleurs — le parcours O(n) de `bestAsk`/`bestBid` (confirmé au §2.3).
+goulot temps. Le vrai goulot est ailleurs — le parcours O(n) de `bestAsk`/`bestBid`.
 C'est la loi d'Amdahl : optimiser une fraction qui ne domine pas le temps ne peut donner qu'un gain
 marginal *sur le temps*. L'acquis reste utile (moins de GC = latence plus stable).
 
 ### 3.2 Analyse : origine des allocations (escape analysis)
 
 _Cette section n'est pas un levier à gain immédiat mais un **diagnostic** : comprendre d'où viennent les
-allocations avant de chercher à les supprimer (le levier lui-même est traité au §3.5)._
+allocations avant de chercher à les supprimer (le levier lui-même est traité plus loin)._
 
 **Objectif :** localiser les allocations du hot path.
 
@@ -312,18 +301,18 @@ allocations dans `matchBuy`/`matchSell`, avec `runtime.growslice` en tête. Padd
 (`make align` → structs déjà alignées, 32 o, rien à réordonner).
 
 **Lecture critique :** les allocations sont **structurelles** (adossées à la `map`), pas un défaut
-local. Les supprimer impose donc de changer la structure — le refactor `map → tableau` (§3.4) puis
-l'index de tête (§3.5). Le diagnostic est cohérent des deux côtés (compile-time et runtime).
+local. Les supprimer impose donc de changer la structure — le refactor `map → tableau` puis
+l'index de tête. Le diagnostic est cohérent des deux côtés (compile-time et runtime).
 
 ### 3.3 Levier : Prix en `int64` (ticks)
 
 **Objectif :** remplacer le prix `float64` par un `int64` en **ticks** (le centime : `100,05 € →
 10005`).
 
-**Hypothèse d'impact matériel :** _le profiling (§2) montre ~9 % du CPU dans le hachage des clés
+**Hypothèse d'impact matériel :** _le profiling montre ~9 % du CPU dans le hachage des clés
 `float64` (`f64hash` + `aeshashbody`). Une clé `int64` se hache en moins de cycles → ce coût doit
 disparaître. Bonus métier : plus d'erreur d'arrondi. C'est aussi le **prérequis** de l'indexation par
-tableau (§3.4)._
+tableau._
 
 **Commande de vérification :** `go tool pprof -top cpu.prof | grep -i hash`.
 
@@ -339,7 +328,7 @@ tableau (§3.4)._
 | Allocations / Mémoire | 81,42 k / 37,75 MiB | idem | inchangé |
 
 **Lecture critique :** gain purement **CPU** (le hachage), sans toucher au stockage. Le O(n) de
-`bestAsk`/`bestBid` reste le goulot dominant → §3.4.
+`bestAsk`/`bestBid` reste le goulot dominant.
 
 ---
 
@@ -349,9 +338,9 @@ tableau (§3.4)._
 `tick − minTick`), avec deux curseurs `bestBidIdx` / `bestAskIdx`. Le meilleur prix devient une lecture
 directe du curseur — **O(1)** au lieu du parcours complet de la map — **O(n)** — à chaque ordre.
 
-**Hypothèse d'impact matériel :** _le profiling (§2.3) prouve que `bestAsk` + `bestBid` = **~61 % du
+**Hypothèse d'impact matériel :** _le profiling prouve que `bestAsk` + `bestBid` = **~61 % du
 CPU** (parcours de la map à chaque ordre). Un curseur maintenu sur le meilleur niveau supprime cette
-recherche (O(n) → O(1)). Prérequis : clé `int64` (§3.3), car un tableau ne s'indexe que par un entier
+recherche (O(n) → O(1)). Prérequis : clé `int64`, car un tableau ne s'indexe que par un entier
 borné._
 
 **Commande de vérification :** `make save NAME=opt-ticks-array` puis
@@ -381,8 +370,8 @@ sens qu'**après** la preuve du profiling. Deux remarques :
 - _Contrepartie :_ le tableau suppose une **plage de prix bornée** (`minTick..maxTick`), classique en
   HFT (les prix restent dans une bande étroite) ; en production on ajouterait un repli hors plage.
 - _Re-profil (démarche itérative) :_ une fois le O(n) parti, le nouveau goulot devient
-  `runtime.growslice`/`memmove` (~30 % du CPU) — les réallocations de slices. C'est ce que le §3.5
-  attaque. Le profil s'est **aplati** : plus aucune fonction ne domine.
+  `runtime.growslice`/`memmove` (~30 % du CPU) — les réallocations de slices. C'est ce que le levier
+  suivant attaque. Le profil s'est **aplati** : plus aucune fonction ne domine.
 
 **Fluctuation des prix & bande bornée.** Le tableau n'est rapide que parce qu'il est **borné**
 (`idx = prix − minTick`, une case par prix) : il suppose que les prix restent dans la fenêtre
@@ -396,9 +385,9 @@ perdre le O(1) :
 |---|---|---|
 | **Fenêtre glissante (re-centrage)** | la bande *suit* le prix de référence ; quand le mid dérive, on décale la fenêtre (principe du *ring buffer*) | garde l'O(1) ; petit coût ajouté au Hot Path (test de bande + décalage), **à mesurer** — solution HFT de référence |
 | **Hybride tableau + map de débordement** | tableau pour la bande chaude (≈ 99 % des ordres), map lente pour les rares prix hors bande | O(1) courant, dégradé O(n) hors bande ; simple et robuste |
-| **Élargir la bande** | couvrir un très grand intervalle d'emblée | **écarté** : sur-provisionnement mémoire, cf. le piège du §4 |
+| **Élargir la bande** | couvrir un très grand intervalle d'emblée | **écarté** : sur-provisionnement mémoire (le même piège que la pré-allocation avide) |
 
-Dans ce TP, la bande fixe est une **hypothèse assumée** (le générateur reste dedans, §1.2). En
+Dans ce TP, la bande fixe est une **hypothèse assumée** (le générateur reste dedans). En
 production, on retiendrait le **re-centrage** : il ne casse pas l'O(1) mais ajoute un coût au Hot Path
 qu'il faudrait chiffrer — l'arbitrage « robustesse à la fluctuation ↔ vitesse » n'est donc pas gratuit.
 
@@ -406,9 +395,8 @@ qu'il faudrait chiffrer — l'arbitrage « robustesse à la fluctuation ↔ vite
 
 ### 3.5 Levier : zéro-allocation par index de tête
 
-**Objectif :** supprimer les réallocations de slices pointées par le re-profil du §3.4
-(`growslice`/`memmove` ≈ 30 % du CPU). C'est la consigne « pré-allouer & recycler » de la séance 4
-(§9–11) et de la `constitution.md`.
+**Objectif :** supprimer les réallocations de slices pointées par le re-profil
+(`growslice`/`memmove` ≈ 30 % du CPU). C'est la consigne « pré-allouer & recycler » de la `constitution.md`.
 
 **Hypothèse d'impact matériel :** _`level[1:]` avance la tête FIFO mais détruit la capacité du slice ;
 au re-remplissage d'un niveau vidé, `append` réalloue. En gardant un index de tête `head` par niveau et
@@ -433,18 +421,15 @@ de réallocation dans le cycle vidage/remplissage._
 | Allocations | 78 088 | **457** | **−99,41 %** | ✅ p=0,000 (n=10) |
 | Mémoire | 37,62 MiB | 34,37 MiB | −8,65 % | ✅ p=0,000 (n=10) |
 
-**Lecture critique :** ici, contrairement au §3.1, réduire les allocations **fait aussi baisser le
-temps** (−31 %) — parce que le §3.4 avait d'abord supprimé le O(n), rendant le `growslice`/`memmove`
+**Lecture critique :** réduire les allocations **fait aussi baisser le
+temps** (−31 %) — parce que le levier précédent (tableau de ticks) avait d'abord supprimé le O(n), rendant le `growslice`/`memmove`
 dominant. L'ordre des leviers compte (Amdahl). Enfin, « zéro-alloc » ne veut pas dire 0 littéral : les
 457 restantes sont **structurelles** (croissance du slice `trades`, dimensionnement initial des niveaux)
-et **justifiées** au sens de la constitution. Les forcer à 0 serait contre-productif — voir le §4.
+et **justifiées** au sens de la constitution. Les forcer à 0 serait contre-productif.
 
 ---
 
 ### 3.6 Levier : parallélisation (worker pool multi-symboles)
-
-> _Séance J3_AM. Hypothèse et principe de conception posés **avant** de coder (démarche de la
-> `constitution.md`), puis mesure du speedup._
 
 **Objectif :** exploiter les cœurs du CPU en traitant **plusieurs carnets (symboles) en parallèle**,
 via un worker pool borné à `runtime.NumCPU()` alimenté par un channel.
@@ -458,11 +443,11 @@ physiques, mémoire, ordonnanceur)._
 est **intrinsèquement séquentiel** : la priorité prix-temps impose de traiter les ordres dans l'ordre,
 donc deux goroutines ne peuvent pas matcher le même carnet sans un verrou partagé (`Mutex`) autour de
 `Submit`. Elles se disputeraient alors ce verrou → **contention** → le débit s'effondre au lieu de
-monter (Loi d'Amdahl / USL, cf. l'échec documenté au §4). La seule parallélisation correcte est donc
-**entre carnets indépendants** : un carnet par **symbole**, aucune donnée partagée, donc **aucun
-verrou**. Chaque worker traite **un carnet en entier, séquentiellement** ; le parallélisme vient du
-nombre de carnets traités **simultanément**. Le moteur mesuré (`Book`, `Submit`, `match*`) reste
-**inchangé** — on ajoute seulement une couche d'orchestration.
+monter (Loi d'Amdahl / USL, cf. l'échec « un carnet + Mutex » documenté plus loin). La seule
+parallélisation correcte est donc **entre carnets indépendants** : un carnet par **symbole**, aucune
+donnée partagée, donc **aucun verrou**. Chaque worker traite **un carnet en entier, séquentiellement** ;
+le parallélisme vient du nombre de carnets traités **simultanément**. Le moteur mesuré (`Book`,
+`Submit`, `match*`) reste **inchangé** — on ajoute seulement une couche d'orchestration.
 
 **Commande de vérification :** `GOMAXPROCS=k go run ./cmd/parallel` pour `k = 1, 2, 4, 8, 16` ; speedup
 = `temps(1) / temps(k)`.
@@ -506,32 +491,30 @@ du channel étant négligeable.)_
 - **Plateau puis légère régression à 16.** Le 7735U a **8 cœurs physiques + SMT** (16 threads
   logiques). Au-delà de 8, les threads supplémentaires partagent les ressources d'un cœur physique →
   pour du calcul CPU/mémoire, ils n'ajoutent rien (16 cœurs = 262 ms, _pire_ que 8 = 254 ms). C'est la
-  nuance « **cœurs physiques** » de la `constitution.md` et l'amorce de l'écroulement **USL** (§7 J3) :
+  nuance « **cœurs physiques** » de la `constitution.md` et l'amorce de l'écroulement **USL** :
   au-delà d'un seuil, ajouter des cœurs ne multiplie plus le débit. **Point optimal : 8 workers.**
 - **Trade-off CPU ↔ RAM.** Le débit se paie en **mémoire de pointe** : chaque worker traite un carnet
   vivant → la RAM croît ~linéairement avec le nombre de workers (~50 MiB à 1, ~340 MiB à 8, ~658 MiB à
   16). Passer de 8 à 16 workers coûte **~2× de RAM pour un temps _pire_** → double raison de s'arrêter à
   8. C'est le compromis que le levier expose : on échange de la mémoire contre du débit.
 - **Caveat de mesure (DVFS).** Le ×3,31 à 2 cœurs est **super-linéaire** — impossible en pur calcul :
-  c'est un artefact de `powersave` + batterie (§1.1), qui laisse le CPU à basse fréquence en mono-thread
+  c'est un artefact de `powersave` + batterie, qui laisse le CPU à basse fréquence en mono-thread
   et le fait booster sous charge, ce qui rend la baseline 1 cœur trop lente. La **forme** de la courbe
   (scaling jusqu'aux cœurs physiques, plateau ensuite) reste valide ; une courbe aux chiffres propres se
   mesurerait sur `performance` + secteur.
 - **Dimensionnement des workers (choix raisonné, pas par défaut).** Ici `workers = GOMAXPROCS` (= nombre
   de cœurs) parce que le matching est **CPU-bound** : un worker qui calcule occupe un cœur à 100 %, en
   mettre davantage ne ferait que du context-switching stérile. Règle générale : charge **CPU-bound** →
-  workers ≈ cœurs ; charge **I/O-bound** (attente réseau/disque, ex. le J4 réseau) → on peut monter à
+  workers ≈ cœurs ; charge **I/O-bound** (attente réseau/disque) → on peut monter à
   **cœurs × 2 à 10**, car les workers passent l'essentiel de leur temps à attendre et libèrent le CPU
   pour d'autres. Notre cas étant purement CPU, `GOMAXPROCS` est le bon réglage.
 
-L'échec « un seul carnet parallélisé » (§4) fournit le contre-exemple qui **justifie** ce choix : là,
+L'échec « un seul carnet parallélisé » fournit le contre-exemple qui **justifie** ce choix : là,
 la contention sur le `Mutex` fait _chuter_ le débit.
 
 ---
 
 ### 3.7 Levier : recyclage des carnets (`sync.Pool`)
-
-> _Séance J3_PM. S'applique au **runner parallèle** (§3.6), pas au moteur mono-carnet._
 
 **Objectif :** dans le runner multi-symboles, **recycler** les carnets entre symboles via un
 `sync.Pool` au lieu d'en allouer un neuf à chaque fois → réduire la pression d'allocation et le GC.
@@ -566,9 +549,8 @@ problème (notre cas en multi-carnets), pas quand la RAM de pointe est la contra
 
 ### 3.8 Levier : compacité du prix (`int64` → `int32`)
 
-> _Retour au moteur mono-carnet. En revisitant la structure `Order` après la séance scalabilité, un
-> dernier levier de compacité est apparu : le prix était stocké en `int64` alors qu'un `int32` suffit
-> très largement._
+> _Retour au moteur mono-carnet. En revisitant la structure `Order`, un dernier levier de compacité est
+> apparu : le prix était stocké en `int64` alors qu'un `int32` suffit très largement._
 
 **Objectif :** réduire la taille de `Order` en stockant le prix (un tick) sur `int32` au lieu d'`int64`,
 pour améliorer la densité en cache du carnet au repos.
@@ -617,7 +599,7 @@ trop large).
   taille non) :
 
   | Type de `Price` | Disposition des champs (offsets en octets) | `sizeof(Order)` |
-  |---|---|---|
+    |---|---|---|
   | `int64` (avant) | ID `0‑7` · Side `8` · Type `9` · _pad `10‑15`_ · Price `16‑23` · Qty `24‑31` | **32 o** |
   | `int32` (retenu) | ID `0‑7` · Side `8` · Type `9` · _pad `10‑11`_ · Price `12‑15` · Qty `16‑23` | **24 o** (−25 %) |
   | `int16` (rejeté) | ID `0‑7` · Side `8` · Type `9` · Price `10‑11` · _pad `12‑15`_ · Qty `16‑23` | **24 o** (aucun gain) |
@@ -636,22 +618,18 @@ trop large).
 
 ## 4. Confrontation critique & « Échec constructif » — /3
 
-> _Attendu : documenter au moins UNE tentative d'optimisation contre-productive ou infructueuse,
-> avec explication mécanique ET chiffrée de la régression avant retour arrière._
-
 ### 4.1 Pré-allocation avide des niveaux (« over-provisioning »)
 
-**Tentative.** Après le levier zéro-alloc
-(§3.5), il restait 457 allocations. Tentation naturelle : les faire disparaître en **pré-allouant**
-chaque niveau à une grosse capacité dans `NewBook` (`make([]Order, 0, 1024)` pour les 201 niveaux × 2
-côtés), pour « ne plus jamais réallouer ».
+**Tentative.** Après le levier zéro-alloc, il restait 457 allocations. Tentation naturelle : les faire
+disparaître en **pré-allouant** chaque niveau à une grosse capacité dans `NewBook`
+(`make([]Order, 0, 1024)` pour les 201 niveaux × 2 côtés), pour « ne plus jamais réallouer ».
 
 **Hypothèse initiale :** _réserver la capacité d'avance élimine la croissance des niveaux → moins
 d'allocations **et** gain de temps (plus de `growslice`/`memmove`)._
 
 **Résultat mesuré (régression, benchstat n=10) :**
 
-| Métrique | Zéro-alloc (§3.5) | Piège (pré-alloc 1024) | Effet | Significatif ? |
+| Métrique | Zéro-alloc | Piège (pré-alloc 1024) | Effet | Significatif ? |
 |---|---|---|---|---|
 | Temps (`sec/op`) | 10,70 ms | 11,36 ms | **+6,16 %** | ✅ p=0,000 (n=10) |
 | Mémoire (`B/op`) | 34,37 MiB | 45,33 MiB | **+31,89 %** | ✅ p=0,000 (n=10) |
@@ -659,7 +637,7 @@ d'allocations **et** gain de temps (plus de `growslice`/`memmove`)._
 
 **L'hypothèse est fausse sur les trois axes** : plus lent, plus gourmand, et même *plus* d'allocations.
 
-**Explication mécanique :** l'index de tête (§3.5) **recycle déjà** les tableaux de niveaux → il ne
+**Explication mécanique :** l'index de tête **recycle déjà** les tableaux de niveaux → il ne
 restait **aucune réallocation à éviter**. La pré-allocation n'apporte donc aucun gain, mais ajoute deux
 coûts : (1) Go **zère** chaque tableau créé → réserver 201 × 2 × 1024 × 32 o ≈ **13 Mo par carnet** se
 paie en `memclr` à chaque `NewBook`, d'où le **+6 % de temps** ; (2) ces 13 Mo restent **réservés**
@@ -667,11 +645,10 @@ paie en `memclr` à chaque `NewBook`, d'où le **+6 % de temps** ; (2) ces 13 Mo
 **multi-symboles** (un carnet par instrument), ce gaspillage serait multiplié par le nombre de symboles
 → intenable.
 
-**Décision : retour arrière** (`git checkout internal/engine/book.go`). On conserve la version §3.5,
-qui n'alloue que le **justifié** (§3.5, « plancher structurel »). Leçon : optimiser une métrique (les
-allocations) **à l'aveugle** peut **régresser les autres** (temps *et* mémoire) sans rien gagner. Le bon
-critère d'arrêt n'est pas « 0 allocation » mais « **plus aucune allocation injustifiée** » — atteint
-dès le §3.5.
+**Décision : retour arrière** (`git checkout internal/engine/book.go`). On conserve la version
+zéro-alloc, qui n'alloue que le **justifié** (« plancher structurel »). Leçon : optimiser une métrique
+(les allocations) **à l'aveugle** peut **régresser les autres** (temps *et* mémoire) sans rien gagner.
+Le bon critère d'arrêt n'est pas « 0 allocation » mais « **plus aucune allocation injustifiée** ».
 
 > _Reproductible : patch de pré-allocation dans `NewBook`, `make save NAME=opt-prealloc-trap`,
 > `make compare A=opt-zero-alloc B=opt-prealloc-trap`, puis `git checkout` pour revenir. Résultats
@@ -679,7 +656,7 @@ dès le §3.5.
 
 ### 4.2 Paralléliser le matching d'un seul carnet (contention)
 
-**Tentative.** Le §3.6 gagne ×6,35 en parallélisant **entre** carnets. Tentation : paralléliser aussi
+**Tentative.** La parallélisation **entre** carnets gagne ×6,35. Tentation : paralléliser aussi
 **dans** un carnet — répartir les 200 000 ordres sur `G` goroutines qui écrivent dans **le même** carnet,
 protégé par un `Mutex`.
 
@@ -706,13 +683,13 @@ pas la RAM.)_
 1. **Contention (performance).** Le `Mutex` **sérialise** tout le matching → **zéro** parallélisme gagné.
    Pire, il ajoute un coût : dès 1 goroutine, +17 % (lock/unlock par ordre, sans concurrent) ; puis la
    dégradation s'aggrave avec les goroutines — mises en attente/réveil et surtout **rebond de la ligne de
-   cache** (le carnet et le verrou font des allers-retours entre cœurs → invalidations MESI, §6 J3).
+   cache** (le carnet et le verrou font des allers-retours entre cœurs → invalidations MESI).
    La dégradation culmine à **×1,98 sur 8 goroutines** — soit exactement le nombre de **cœurs physiques** :
    c'est là que le maximum de cœurs se disputent réellement le verrou en même temps. Au-delà (16 threads
    SMT), le léger reflux à ×1,56 n'est pas un gain : les threads logiques se partagent les mêmes unités
    d'exécution, il y a donc moins de contenders *réellement simultanés* sur le verrou. Le sens est
-   univoque : **ajouter des cœurs ne divise jamais le temps, il l'augmente.** C'est l'**écroulement USL**
-   (§7 J3) — le débit régresse au lieu de scaler.
+   univoque : **ajouter des cœurs ne divise jamais le temps, il l'augmente.** C'est l'**écroulement USL** :
+   le débit régresse au lieu de scaler.
 
    La **preuve chiffrée** vient du profil de contention (`SetMutexProfileFraction(1)` +
    `go tool pprof -top mutex.prof`) : sur **1,65 s de temps cumulé bloqué** à attendre le verrou,
@@ -723,7 +700,7 @@ pas la RAM.)_
    le compte varie d'un run à l'autre (172 345, 172 310, 172 195…) : le résultat est *non déterministe*
    et *faux*, indépendamment de la vitesse — c'est même le problème le plus grave.
 
-**Décision : abandon.** On ne parallélise **pas** un carnet. La bonne architecture est le §3.6 :
+**Décision : abandon.** On ne parallélise **pas** un carnet. La bonne architecture est celle retenue :
 parallélisme **entre carnets indépendants** (aucun état partagé → aucun verrou → aucune contention →
 scaling ×6,35). Le contraste valide le choix : **partager l'état mutable = contention + incorrection ;
 l'isoler = scaling**. (Mantra Go : _« don't communicate by sharing memory; share memory by
@@ -735,9 +712,6 @@ communicating »_.)
 ---
 
 ## 5. Reproductibilité & Synthèse comparative — /4
-
-> _Attendu : automatisation complète en UNE commande + tableau de synthèse chiffrant les gains
-> (baseline vs version finale, via benchstat/hyperfine)._
 
 ### 5.1 Automatisation
 
@@ -787,9 +761,8 @@ make compare A=baseline B=opt-cache   # benchstat entre les deux, avec significa
 ```
 
 `benchstat` indique si l'écart est **réel** ou dans le bruit de mesure. Chaque fichier de résultat
-est associé au **tag Git** de la version correspondante (voir Introduction → Démarche : `baseline-naive`
-→ `baseline.txt`, `opt-cache-locality` → `opt-cache.txt`, …), ce qui rend chaque comparaison
-traçable et reproductible.
+est associé au **tag Git** de la version correspondante (`baseline-naive` → `baseline.txt`,
+`opt-cache-locality` → `opt-cache.txt`, …), ce qui rend chaque comparaison traçable et reproductible.
 
 > _Installer benchstat si besoin : `go install golang.org/x/perf/cmd/benchstat@latest`._
 
@@ -804,31 +777,31 @@ Comparaison `benchstat` de la **baseline aux versions successives**, 10 runs, n 
 | + prix `int64` ticks (`opt-int64-ticks`) | 68,6 ms ± 2 % | 81,4 k | 37,8 MiB | **≈ −12 %** |
 | + tableau de ticks O(1) (`opt-ticks-array`) | 15,48 ms ± 2 % | 78,1 k | 37,6 MiB | −77 % (÷ 4,4) |
 | + zéro-alloc / index de tête (`opt-zero-alloc`) | 10,70 ms ± 1 % | 457 | 34,4 MiB | −86 % (÷ 7,3) |
-| + prix `int32` (§3.8, `opt-int32`) | **9,67 ms ± 2 %** | **455** | **33,8 MiB** | **−87,6 % (÷ 8,0)** |
+| + prix `int32` (`opt-int32`) | **9,67 ms ± 2 %** | **455** | **33,8 MiB** | **−87,6 % (÷ 8,0)** |
 | **Finale (état actuel)** | **9,67 ms** | **455** | 33,8 MiB | **÷ 8,0 vs baseline** |
 
-_Lecture : les premiers leviers (§3.1 localité, §3.3 `int64`) sont des **micro-optimisations** : la localité gagne surtout sur les
+_Lecture : les premiers leviers (localité, `int64`) sont des **micro-optimisations** : la localité gagne surtout sur les
 **allocations** (−71 %) mais le temps ne baisse que de ~6 %, car le goulot temps est ailleurs — le
-**O(n) de `bestAsk`/`bestBid`** (§2.3, ~61 % du CPU). Le levier `map → tableau de ticks` (§3.4)
-supprime ce O(n) — **−77,44 %** (68,59 → 15,48 ms). Puis le §3.5 (index de tête) supprime les
+**O(n) de `bestAsk`/`bestBid`** (~61 % du CPU). Le levier `map → tableau de ticks`
+supprime ce O(n) — **−77,44 %** (68,59 → 15,48 ms). Puis l'index de tête supprime les
 réallocations redevenues visibles une fois le O(n) parti : **−99,4 % d'allocations** (78 k → 457) et,
-cette fois, **−30,9 % de temps** (15,48 → 10,70 ms). Enfin, le §3.8 (prix `int32`) grignote **−9,6 %**
+cette fois, **−30,9 % de temps** (15,48 → 10,70 ms). Enfin, le prix `int32` grignote **−9,6 %**
 de plus (10,70 → 9,67 ms) par densité de cache. Cumul : **÷ 8,0 vs la baseline** (77,75 → 9,67 ms).
-Les deux gros leviers (§3.4, §3.5) illustrent la Loi d'Amdahl : chaque fois qu'on supprime le segment
-dominant, le suivant devient l'objectif — et une optimisation « invisible » sur le temps (allocs au
-§3.1) peut le devenir plus tard (§3.5)._
+Les deux gros leviers (tableau de ticks, index de tête) illustrent la Loi d'Amdahl : chaque fois qu'on supprime le segment
+dominant, le suivant devient l'objectif — et une optimisation « invisible » sur le temps (les allocations
+de la localité) peut le devenir plus tard._
 
 **Deux axes orthogonaux.** Le tableau ci-dessus mesure le **moteur mono-carnet** : **÷8,0** en temps,
-**÷618** en allocations. À cela s'ajoute un **second axe indépendant**, la **parallélisation** (§3.6) :
+**÷618** en allocations. À cela s'ajoute un **second axe indépendant**, la **parallélisation** :
 le débit total scale **×6,35** sur 8 cœurs en traitant plusieurs carnets à la fois. Les deux se
 **cumulent** (un moteur mono-carnet optimisé, exécuté en parallèle) — mais chacun a son **trade-off** :
 le zéro-alloc échange un peu de complexité contre du temps ET de la mémoire ; la parallélisation échange
-de la **RAM de pointe** (N carnets vivants) contre du débit (§3.6).
+de la **RAM de pointe** (N carnets vivants) contre du débit.
 
 #### Mesure processus (hyperfine)
 
 Complément **niveau processus** du binaire `cmd/bench` (`hyperfine --warmup 5 --runs 50`, 50 runs).
-_Ces mesures ont été prises sur la version **zéro-alloc** (avant le levier §3.8 `int32`) ; le −9,6 % du
+_Ces mesures ont été prises sur la version **zéro-alloc** (avant le levier `int32`) ; le −9,6 % du
 matching y retrancherait ~1 ms, sans changer la lecture (le coût fixe startup + génération domine)._
 
 | Binaire | Temps processus (mean ± σ) | Min / Max |
@@ -854,27 +827,24 @@ coût fixe que l'optimisation ne touche pas. Ce coût fixe pèse désormais **~3
 (6,3 / 17,0 ms) contre ~6 % de la baseline : plus on optimise le matching, plus la part non optimisée
 domine — la limite d'Amdahl s'est déplacée vers le startup + la génération. Pour aller plus loin, ce
 serait désormais **là** qu'il faudrait chercher (ex. génération en streaming). Note : sur batterie +
-`powersave` (§1.1), le binaire naïf a montré un run à froid à ~168 ms (DVFS), d'où un σ plus large — la
+`powersave`, le binaire naïf a montré un run à froid à ~168 ms (DVFS), d'où un σ plus large — la
 finale, elle, reste très stable (σ 1,0 ms)._
 
 ---
 
 ## 6. BONUS — Gouvernance technique (`constitution.md`) — +2
 
-> _Attendu : fichier de contrainte à la racine, 4 directives respectées (posture système, gardes-fous
-> négatifs, justification empirique hypothèse/commande, formatage impératif)._
-
 - [x] `constitution.md` présent à la racine du dépôt
-- [x] **Directive 1 — posture système** (ingénieur contraint par des métriques réelles) → appliquée dans tout le rapport : aucun levier sans mesure préalable (§2 avant §3), ordre *work → right → fast* respecté.
-- [x] **Directive 2 — gardes-fous** (bannir `fmt.Sprintf` sur Hot Path, `float64`, goroutines non bornées) → `fmt.Sprintf` absent du matching (§3.2), prix passés en `int64` (§3.3), allocations chaudes justifiées ou supprimées (§3.5).
-- [x] **Directive 3 — justification empirique** (couple hypothèse / commande de preuve) → chaque levier §3.1–3.5 est formulé ainsi (« Hypothèse d'impact matériel » + « Commande de vérification »), et le §4 documente une hypothèse **infirmée** par la mesure.
+- [x] **Directive 1 — posture système** (ingénieur contraint par des métriques réelles) → appliquée dans tout le rapport : aucun levier sans mesure préalable, ordre *work → right → fast* respecté.
+- [x] **Directive 2 — gardes-fous** (bannir `fmt.Sprintf` sur Hot Path, `float64`, goroutines non bornées) → `fmt.Sprintf` absent du matching, prix passés en `int64`, allocations chaudes justifiées ou supprimées.
+- [x] **Directive 3 — justification empirique** (couple hypothèse / commande de preuve) → chaque levier est formulé ainsi (« Hypothèse d'impact matériel » + « Commande de vérification »), et la confrontation critique documente une hypothèse **infirmée** par la mesure.
 - [x] **Directive 4 — formatage impératif et vérifiable** → chaque affirmation de perf est chiffrée et rejouable (tags Git + `bench-results/*.txt` + `benchstat`).
 
-_La constitution n'a pas seulement été écrite : elle a **gouverné la démarche** (mesure avant optimisation, justification chiffrée, retour arrière au §4). C'est sa mise en pratique, pas sa simple présence, qui vaut le bonus._
+_La constitution n'a pas seulement été écrite : elle a **gouverné la démarche** (mesure avant optimisation, justification chiffrée, retour arrière). C'est sa mise en pratique, pas sa simple présence, qui vaut le bonus._
 
 ---
 
 ## Annexes
 
-- Sorties brutes de benchmark : `bench-results/*.txt` (`baseline`, `opt-cache`, `opt-ticks`, `opt-ticks-array`, `opt-zero-alloc`, `opt-prealloc-trap`).
+- Sorties brutes de benchmark : `bench-results/*.txt` (`baseline`, `opt-cache`, `opt-ticks`, `opt-ticks-array`, `opt-zero-alloc`, `opt-prealloc-trap`, `opt-int32`).
 - Historique Git : tag `baseline-naive` → commits par levier.
