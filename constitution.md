@@ -1,8 +1,5 @@
 # constitution.md — Gouvernance technique du projet Order Book HFT
 
-> Fichier de contrainte pour tout assistant IA intervenant sur ce dépôt.
-> Barème BONUS (+2 pts). Directives impératives et vérifiables.
-
 ## 1. Rôle & posture système
 
 - Agis en **ingénieur système contraint par des métriques physiques réelles**, jamais en générateur de code superficiel.
