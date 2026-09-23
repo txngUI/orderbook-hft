@@ -7,7 +7,7 @@ Le moteur ingère un flux d'ordres d'achat/vente et les apparie en temps réel p
 transactions, en servant de support à une démarche d'optimisation mesurée (baseline → profiling →
 leviers → comparatif).
 
-## Résultats (séances 1–4)
+## Résultats 
 
 De la baseline naïve à la version optimisée, sur `BenchmarkMatching` (n = 200 000, benchstat n=10,
 AMD Ryzen 7 7735U) :
@@ -26,6 +26,7 @@ Détails, mesures avant/après et analyse : [`RAPPORT-AUDIT.md`](./RAPPORT-AUDIT
   meilleur prix, reliquat annulé).
 - Exécution partielle et traversée de plusieurs niveaux de prix.
 - Générateur de flux **reproductible** (même graine → même flux) pour des mesures rejouables.
+- **Visualisation HTML** du carnet (snapshot statique généré par le moteur).
 - Tests de correction et benchmarks (`go test`).
 
 ## Prérequis
@@ -47,17 +48,36 @@ make compare A=baseline B=opt-zero-alloc   # comparatif benchstat entre deux ver
 
 La baseline chronométrée seule : `go run ./cmd/bench`.
 
+## Visualisation (interface web)
+
+Le moteur peut produire une **vue HTML du carnet** — profondeur *bids* / *asks*, spread, et les
+dernières transactions — générée à partir d'un vrai run :
+
+```bash
+go run ./cmd/snapshot     # écrit snapshot.html à la racine
+xdg-open snapshot.html    # ou ouvrir le fichier dans un navigateur
+```
+
+C'est un **snapshot statique** : une photo de l'état final du carnet, sans JavaScript. Le flux étant
+déterministe (graine fixe), l'image est reproductible d'un run à l'autre. Le fichier `snapshot.html`
+est une **sortie** (ignorée par git, régénérable à volonté). Une version **temps réel** (serveur +
+WebSocket) est prévue pour la séance J4 (réseau).
+
 ## Structure
 
 ```
 orderbook-hft/
 ├── cmd/
-│   └── bench/
-│       └── main.go                 # point d'entrée : lanceur chronométré (binaire ./ob)
+│   ├── bench/
+│   │   └── main.go                 # point d'entrée : lanceur chronométré (binaire ./ob)
+│   └── snapshot/
+│       ├── main.go                 # lance le moteur puis remplit le gabarit HTML
+│       └── snapshot.tmpl.html      # gabarit de la page (embarqué via //go:embed)
 ├── internal/
 │   ├── engine/                     # cœur du moteur
 │   │   ├── order.go                # types Order, Side, OrderType, Trade
 │   │   ├── book.go                 # Book indexé par tick + appariement prix-temps
+│   │   ├── snapshot.go             # photo en lecture seule du carnet (hors Hot Path)
 │   │   ├── book_test.go            # tests de correction (filet de sécurité)
 │   │   └── locality_test.go        # expérience de localité de cache (contigu vs dispersé)
 │   ├── engine_test/
@@ -73,15 +93,17 @@ orderbook-hft/
 │   └── opt-zero-alloc.txt
 ├── flamegraph-cpu.png              # flamegraph du profil CPU (goulot bestAsk/bestBid)
 ├── hyperfine.md                    # mesure end-to-end du binaire (./ob vs ./ob_opti)
+├── snapshot.html                   # vue HTML du carnet — GÉNÉRÉE (ignorée par git)
 ├── Makefile                        # test, bench, profile, save, compare, clean…
 ├── constitution.md                 # règles de gouvernance technique (contraintes de perf)
 ├── RAPPORT-AUDIT.md                # rapport d'audit de performance (démarche + mesures)
+├── .gitignore
 ├── go.mod
 └── README.md
 ```
 
-Les artefacts générés (`cpu.prof`, `mem.prof`, `*.test`, `ob`, `ob_opti`) se régénèrent via le
-`Makefile` et se suppriment avec `make clean`.
+Les artefacts générés (`snapshot.html`, `cpu.prof`, `mem.prof`, `*.test`, `ob`, `ob_opti`) se
+régénèrent (via le `Makefile` ou `go run ./cmd/snapshot`) et sont ignorés par git.
 
 ## Concepts clés
 
@@ -110,8 +132,9 @@ chaque optimisation.
 | Prix `int64` (ticks) | ✅ |
 | Structure indexée par tick → best-price O(1) | ✅ |
 | Zéro-allocation (index de tête, recyclage des niveaux) | ✅ |
+| Visualisation HTML du carnet (snapshot statique) | ✅ |
 | Concurrence / worker pool (séance J3) | ⬜ à venir |
-| Réseau + persistance (séance J4) | ⬜ à venir |
+| Réseau + persistance + interface temps réel (séance J4) | ⬜ à venir |
 
 ## Documentation
 

@@ -68,3 +68,8 @@ bench-hyperfine:
 clean:
 	rm -f cpu.prof mem.prof *.test hyperfine.md ob ob_naif ob_opti
 	rm -f baseline.txt opt-*.txt final.txt   # anciens .txt éventuellement restés à la racine
+
+## snapshot : génère la vue HTML du carnet (snapshot statique) et affiche le chemin.
+snapshot:
+	go run ./cmd/snapshot
+	@echo ">> ouvre snapshot.html dans un navigateur"

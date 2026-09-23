@@ -1,0 +1,14 @@
+# Binaires compilés
+/ob
+/ob_naif
+/ob_opti
+*.test
+
+# Profils pprof (générés)
+*.prof
+
+# Sortie hyperfine
+hyperfine.md
+
+# Snapshot HTML (généré via `go run ./cmd/snapshot`)
+/snapshot.html

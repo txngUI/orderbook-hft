@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Order Book — Snapshot</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+  :root{
+    --bg:#f3f5f9; --panel:#ffffff; --panel-2:#eef2f7; --border:#dbe2ec;
+    --text:#131a26; --muted:#65728a; --faint:#94a1b6;
+    --bid:#0f9d58; --bid-bar:rgba(15,157,88,.13);
+    --ask:#dc2b3a; --ask-bar:rgba(220,43,58,.11);
+    --accent:#b26a00;
+    --sans:"IBM Plex Sans",system-ui,sans-serif;
+    --mono:"IBM Plex Mono",ui-monospace,monospace;
+  }
+  @media (prefers-color-scheme:dark){:root{
+    --bg:#080b11; --panel:#0f141d; --panel-2:#151c28; --border:#20293a;
+    --text:#e7eef7; --muted:#8695ab; --faint:#5b6779;
+    --bid:#3fd48a; --bid-bar:rgba(63,212,138,.15);
+    --ask:#ff5d6a; --ask-bar:rgba(255,93,106,.13);
+    --accent:#f5b544; color-scheme:dark;
+  }}
+  *{box-sizing:border-box}
+  body{margin:0; background:var(--bg); color:var(--text);
+    font-family:var(--sans); line-height:1.4; -webkit-font-smoothing:antialiased;}
+  .wrap{max-width:1080px; margin:0 auto; padding:16px; padding-block:20px 32px;}
+  header.top{display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+    padding-bottom:16px; border-bottom:1px solid var(--border);}
+  .brand{display:flex; align-items:center; gap:10px; margin-right:auto;}
+  .dot{width:9px; height:9px; border-radius:50%; background:var(--muted);}
+  .brand h1{font-size:16px; font-weight:600; letter-spacing:-.01em; margin:0;}
+  .brand .sub{font-family:var(--mono); font-size:12px; color:var(--muted);}
+  .chip{font-family:var(--mono); font-size:10.5px; letter-spacing:.04em;
+    text-transform:uppercase; color:var(--muted); border:1px solid var(--border);
+    border-radius:999px; padding:3px 9px; background:var(--panel-2);}
+  .instr{font-family:var(--mono); font-size:13px; font-weight:500;}
+  .instr b{color:var(--accent);}
+  .stats{display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin:18px 0;}
+  .tile{background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:12px 14px;}
+  .tile .k{font-size:10.5px; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); margin-bottom:6px;}
+  .tile .v{font-family:var(--mono); font-size:22px; font-weight:600; letter-spacing:-.02em; font-variant-numeric:tabular-nums;}
+  .tile .v small{font-size:12px; color:var(--muted); font-weight:400;}
+  main{display:grid; grid-template-columns:1.35fr 1fr; gap:14px;}
+  .panel{background:var(--panel); border:1px solid var(--border); border-radius:14px; overflow:hidden;}
+  .panel > .head{display:flex; align-items:center; justify-content:space-between; padding:11px 14px; border-bottom:1px solid var(--border);}
+  .panel .head .title{font-size:12px; font-weight:600; letter-spacing:.02em;}
+  .panel .head .note{font-family:var(--mono); font-size:11px; color:var(--faint);}
+  .colhead{display:grid; grid-template-columns:1fr 1fr; gap:8px; padding:6px 14px;
+    font-family:var(--mono); font-size:10.5px; letter-spacing:.04em; text-transform:uppercase; color:var(--faint);}
+  .colhead .r{text-align:right;}
+  .book{padding:2px 0 6px;}
+  .row{position:relative; display:grid; grid-template-columns:1fr 1fr; gap:8px; padding:4px 14px;
+    font-family:var(--mono); font-size:13.5px; font-variant-numeric:tabular-nums; align-items:center;}
+  .row .bar{position:absolute; top:2px; bottom:2px; right:0; border-radius:4px 0 0 4px;}
+  .row.ask .bar{background:var(--ask-bar);} .row.bid .bar{background:var(--bid-bar);}
+  .row .price{position:relative; font-weight:500;}
+  .row.ask .price{color:var(--ask);} .row.bid .price{color:var(--bid);}
+  .row .size{position:relative; text-align:right;}
+  .row.best .price{font-weight:600;}
+  .spreadband{display:flex; align-items:center; justify-content:center; gap:14px; padding:9px 14px; margin:2px 0;
+    border-top:1px solid var(--border); border-bottom:1px solid var(--border); background:var(--panel-2); font-family:var(--mono);}
+  .spreadband .last{font-size:19px; font-weight:600; letter-spacing:-.02em; font-variant-numeric:tabular-nums;}
+  .spreadband .sp{font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em;}
+  .spreadband .sp b{color:var(--text); font-size:13px; letter-spacing:0;}
+  .tape{max-height:432px; overflow-y:auto;}
+  .tape .trade{display:grid; grid-template-columns:auto 1fr auto; gap:10px; padding:6px 14px;
+    font-family:var(--mono); font-size:12.5px; font-variant-numeric:tabular-nums; border-bottom:1px solid var(--border); align-items:baseline;}
+  .tape .trade:last-child{border-bottom:0;}
+  .tape .trade .tm{color:var(--faint); font-size:11px;}
+  .tape .trade .pr{font-weight:600; text-align:right;}
+  .up{color:var(--bid);} .down{color:var(--ask);}
+  .tape .trade .qt{color:var(--muted); text-align:right; min-width:46px;}
+  .perf{margin-top:16px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:12px 15px;
+    border:1px dashed var(--border); border-radius:12px; font-size:12.5px; color:var(--muted);}
+  .perf .badge{font-family:var(--mono); font-size:11px; color:var(--accent);
+    border:1px solid var(--border); border-radius:6px; padding:2px 8px;}
+  .perf b{color:var(--text); font-family:var(--mono); font-variant-numeric:tabular-nums;}
+  @media (max-width:720px){main{grid-template-columns:1fr;} .stats{grid-template-columns:repeat(2,1fr);} .tape{max-height:300px;}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <span class="dot"></span>
+      <div><h1>Order Book HFT</h1><div class="sub">moteur d'appariement · Go</div></div>
+    </div>
+    <span class="instr">ACME / EUR · réf. <b>100,00&nbsp;€</b></span>
+    <span class="chip">snapshot · {{.Generated}}</span>
+  </header>
+
+  <section class="stats">
+    <div class="tile"><div class="k">Dernier</div><div class="v">{{.Last}} <small>€</small></div></div>
+    <div class="tile"><div class="k">Spread</div><div class="v">{{.Spread}} <small>€</small></div></div>
+    <div class="tile"><div class="k">Trades</div><div class="v">{{.Trades}}</div></div>
+    <div class="tile"><div class="k">Volume</div><div class="v">{{.Volume}}</div></div>
+  </section>
+
+  <main>
+    <section class="panel">
+      <div class="head"><span class="title">Carnet — profondeur</span><span class="note">état final du run</span></div>
+      <div class="colhead"><span>Prix (€)</span><span class="r">Taille</span></div>
+      <div class="book">
+        {{range .Asks}}<div class="row ask{{if .Best}} best{{end}}"><div class="bar" style="width:{{.Width}}%"></div><span class="price">{{.Price}}</span><span class="size">{{.Size}}</span></div>
+        {{end}}
+      </div>
+      <div class="spreadband">
+        <span class="last">{{.Last}} €</span>
+        <span class="sp">spread <b>{{.Spread}} €</b></span>
+      </div>
+      <div class="book">
+        {{range .Bids}}<div class="row bid{{if .Best}} best{{end}}"><div class="bar" style="width:{{.Width}}%"></div><span class="price">{{.Price}}</span><span class="size">{{.Size}}</span></div>
+        {{end}}
+      </div>
+    </section>
+
+    <aside class="panel">
+      <div class="head"><span class="title">Trades</span><span class="note">16 derniers</span></div>
+      <div class="tape">
+        {{range .Tape}}<div class="trade"><span class="tm">{{.Ref}}</span><span class="pr {{if .Up}}up{{else}}down{{end}}">{{.Price}}</span><span class="qt">{{.Size}}</span></div>
+        {{end}}
+      </div>
+    </aside>
+  </main>
+
+  <div class="perf">
+    <span class="badge">MOTEUR</span>
+    <span>Appariement mesuré : <b>10,7&nbsp;ms</b> / 200&nbsp;000 ordres · <b>457</b> allocs/op · <b>÷7,3</b> vs baseline naïve</span>
+  </div>
+</div>
+</body>
+</html>

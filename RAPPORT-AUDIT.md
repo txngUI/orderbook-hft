@@ -448,6 +448,7 @@ commande » de l'axe 5 est tenue : `make bench` reproduit intégralement la mesu
 | `make bench-cache` | Expérience de localité (contigu vs dispersé, le ×26) | `go test -bench='Contiguous\|Dispersed' -benchmem ./...` |
 | `make profile` | Génère un profil CPU `cpu.prof` (→ flamegraph, axe 2) | `go test -bench=Matching -cpuprofile cpu.prof ./...` |
 | `make bench-hyperfine` | Mesure **processus** du binaire entier (niveau end-to-end) | `hyperfine --warmup 5 --runs 50 './ob'` |
+| `make snapshot` | Génère la vue HTML du carnet (visualisation, hors périmètre perf) | `go run ./cmd/snapshot` |
 | `make clean` | Supprime les fichiers éphémères (profils, binaires) ; garde `bench-results/` | — |
 | `make` | Enchaîne `test` puis `bench` | — |
 
