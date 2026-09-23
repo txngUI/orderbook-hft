@@ -26,7 +26,7 @@ func Generate(n int, seed int64) []engine.Order {
 
 		// prix resserré 
 		// → garantit beaucoup de matches, donc on mesure le vrai matching
-		price := int64(10000 + (r.Intn(41)-20)*5)
+		price := int32(10000 + (r.Intn(41)-20)*5)
 
 		orders[i] = engine.Order{
 			ID:       uint64(i + 1),

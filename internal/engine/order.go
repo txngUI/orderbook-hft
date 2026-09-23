@@ -22,13 +22,13 @@ type Order struct {
 	ID       uint64    // identifiant. uint64 = entier non signé 64 bits (comme long en Java, mais >= 0)
 	Side     Side      // Buy ou Sell
 	Type     OrderType // Limit ou Market
-	Price    int64     // prix. int64 = long Java. (on met sous forme de ticks pour éviter les float et les arrondis et prendre moins de place mémoire)
+	Price    int32     // prix. int32 = int Java. (on met sous forme de ticks pour éviter les float et les arrondis et prendre moins de place mémoire)
 	Quantity uint64    // quantité restant à exécuter
 }
 
 type Trade struct {
 	BuyOrderID  uint64
 	SellOrderID uint64
-	Price       int64
+	Price       int32
 	Quantity    uint64
 }

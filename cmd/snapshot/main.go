@@ -34,7 +34,7 @@ type pageData struct {
 	Generated      string
 }
 
-func eur(cents int64) string {
+func eur(cents int32) string {
 	return strings.Replace(fmt.Sprintf("%.2f", float64(cents)/100), ".", ",", 1)
 }
 func group(n uint64) string {

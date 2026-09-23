@@ -2,7 +2,7 @@ package engine
 
 import "testing"
 
-func mk(id uint64, s Side, t OrderType, p int64, q uint64) *Order {
+func mk(id uint64, s Side, t OrderType, p int32, q uint64) *Order {
 	return &Order{ID: id, Side: s, Type: t, Price: p, Quantity: q}
 }
 

@@ -2,7 +2,7 @@ package engine
 
 // Level : un niveau de prix agrégé (somme des quantités au repos à ce prix).
 type Level struct {
-	Price int64  // en ticks (centimes)
+	Price int32  // en ticks (centimes)
 	Size  uint64
 }
 
@@ -10,7 +10,7 @@ type Level struct {
 type Snapshot struct {
 	Bids    []Level // meilleur d'abord (prix le plus HAUT)
 	Asks    []Level // meilleur d'abord (prix le plus BAS)
-	BestBid, BestAsk int64
+	BestBid, BestAsk int32
 	HasBid, HasAsk   bool
 }
 
@@ -25,7 +25,7 @@ func (b *Book) Snapshot(depth int) Snapshot {
 		for i := range lvl {
 			sz += lvl[i].Quantity
 		}
-		s.Asks = append(s.Asks, Level{Price: int64(idx) + b.minTick, Size: sz})
+		s.Asks = append(s.Asks, Level{Price: int32(idx) + b.minTick, Size: sz})
 	}
 	for idx := b.bestBidIdx; idx >= 0 && len(s.Bids) < depth; idx-- {
 		lvl := b.bids[idx][b.bidsHead[idx]:]
@@ -36,7 +36,7 @@ func (b *Book) Snapshot(depth int) Snapshot {
 		for i := range lvl {
 			sz += lvl[i].Quantity
 		}
-		s.Bids = append(s.Bids, Level{Price: int64(idx) + b.minTick, Size: sz})
+		s.Bids = append(s.Bids, Level{Price: int32(idx) + b.minTick, Size: sz})
 	}
 	if len(s.Asks) > 0 {
 		s.BestAsk, s.HasAsk = s.Asks[0].Price, true

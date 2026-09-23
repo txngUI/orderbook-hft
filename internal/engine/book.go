@@ -5,7 +5,7 @@ package engine
 // pas codées en dur : la plage est une donnée, partagée avec le générateur.
 
 type Book struct {
-	minTick    int64
+	minTick    int32
 	bids, asks [][]Order
 	bidsHead   []int // front FIFO par niveau bid (index du plus ancien ordre non consommé)
 	asksHead   []int // front FIFO par niveau ask
@@ -15,7 +15,7 @@ type Book struct {
 }
 
 // NewBook crée un carnet couvrant les prix de minTick à maxTick inclus (en ticks).
-func NewBook(minTick, maxTick int64) *Book {
+func NewBook(minTick, maxTick int32) *Book {
 	n := int(maxTick - minTick + 1)
 	return &Book{
 		minTick:    minTick,
@@ -44,7 +44,7 @@ func (b *Book) matchBuy(o *Order) {
 		if b.bestAskIdx >= len(b.asks) {
 			break // plus aucun vendeur
 		}
-		askPrice := int64(b.bestAskIdx) + b.minTick
+		askPrice := int32(b.bestAskIdx) + b.minTick
 		if o.Type == Limit && askPrice > o.Price {
 			break
 		}
@@ -82,7 +82,7 @@ func (b *Book) matchSell(o *Order) {
 		if b.bestBidIdx < 0 {
 			break
 		}
-		bidPrice := int64(b.bestBidIdx) + b.minTick
+		bidPrice := int32(b.bestBidIdx) + b.minTick
 		if o.Type == Limit && bidPrice < o.Price {
 			break
 		}

@@ -7,15 +7,15 @@ Le moteur ingère un flux d'ordres d'achat/vente et les apparie en temps réel p
 transactions, en servant de support à une démarche d'optimisation mesurée (baseline → profiling →
 leviers → comparatif).
 
-## Résultats 
+## Résultats (séances 1–4)
 
 De la baseline naïve à la version optimisée, sur `BenchmarkMatching` (n = 200 000, benchstat n=10,
 AMD Ryzen 7 7735U) :
 
 | | Baseline | Finale | Gain |
 |---|---|---|---|
-| Temps | 77,75 ms | **10,70 ms** | **÷ 7,3** |
-| Allocations | 281 415 | **457** | **÷ 615** |
+| Temps | 77,75 ms | **9,67 ms** | **÷ 8,0** |
+| Allocations | 281 415 | **455** | **÷ 618** |
 
 Détails, mesures avant/après et analyse : [`RAPPORT-AUDIT.md`](./RAPPORT-AUDIT.md).
 
@@ -132,8 +132,10 @@ chaque optimisation.
 | Prix `int64` (ticks) | ✅ |
 | Structure indexée par tick → best-price O(1) | ✅ |
 | Zéro-allocation (index de tête, recyclage des niveaux) | ✅ |
+| Prix `int32` (compacité `Order` 32→24 o, densité cache) | ✅ |
 | Visualisation HTML du carnet (snapshot statique) | ✅ |
-| Concurrence / worker pool (séance J3) | ⬜ à venir |
+| Concurrence / worker pool (séance J3) — ×6,35 sur 8 cœurs | ✅ |
+| Recyclage des carnets (`sync.Pool`, séance J3) | ✅ |
 | Réseau + persistance + interface temps réel (séance J4) | ⬜ à venir |
 
 ## Documentation
