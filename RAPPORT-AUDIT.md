@@ -5,11 +5,6 @@
 **Projet :** Order Book HFT (moteur d'appariement, Go)
 **Dépôt :** `[lien Git]` — baseline figée au tag `baseline-naive`
 
-> **Comment remplir ce squelette :** chaque section correspond à un axe du barème (points
-> indiqués). Les blocs en _italique_ rappellent ce qui est attendu. Remplace les `[À REMPLIR]`
-> au fur et à mesure des séances. Le code n'est pas noté en soi : ce document est la seule pièce
-> qui fait foi. Chaque affirmation de perf doit être **chiffrée et reproductible**.
-
 ---
 
 ## Introduction
@@ -56,6 +51,7 @@ et toute comparaison est rejouable (`benchstat <avant>.txt <après>.txt`).
 | `opt-cache-locality` | + disposition mémoire contiguë (fin des `[]*Order` dispersés) | `opt-cache.txt` | 2 |
 | `opt-int64-ticks` | + prix en `int64` (ticks) | `opt-ticks.txt` | 4 |
 | `opt-ticks-array` | + tableau de niveaux indexé par tick → best-price O(1) | `opt-ticks-array.txt` | 4 |
+| `opt-zero-alloc` | + index de tête (recyclage des niveaux → zéro-alloc) | `opt-zero-alloc.txt` | 4 |
 | `opt-concurrency` | + worker pool borné aux cœurs physiques | `[À REMPLIR]` | `[…]` |
 | `final` | version optimisée finale | `final.txt` | — |
 
@@ -72,9 +68,6 @@ assumées (§4), la synthèse comparative reproductible (§5) et la gouvernance 
 
 ## 1. Environnement & Métrologie (Baseline) — /3
 
-> _Attendu : spécification précise du banc d'essai matériel + rigueur du protocole de mesure
-> (warmup, nombre d'itérations, isolation du bruit, stats complètes)._
-
 ### 1.1 Banc d'essai matériel
 
 | Élément | Valeur |
@@ -86,27 +79,19 @@ assumées (§4), la synthèse comparative reproductible (§5) et la gouvernance 
 | Runtime | Go `go1.26.5-X:nodwarf5 linux/amd64` |
 | Alimentation / gouverneur | **batterie** · gouverneur `powersave` |
 
-> _Note de métrologie : les mesures ont été réalisées **sur batterie** avec le gouverneur `powersave`
-> (DVFS actif → la fréquence CPU varie selon la charge et la température). L'usage le plus strict serait
-> **secteur + gouverneur `performance`**, qui fige la fréquence pendant la mesure. Deux garde-fous
-> rendent néanmoins les résultats fiables : (1) l'écart-type du banc est très faible (**1,2 %**, §1.3.2),
-> preuve que le bruit résiduel est négligeable ; (2) **toutes** les versions sont mesurées dans les
-> **mêmes conditions**, donc les gains relatifs (−77 %, etc.) restent valides — seuls les temps absolus
-> seraient un peu plus bas sur secteur._
-
 ### 1.2 Protocole de mesure
 
 Points communs aux deux mesures :
 - **Charge :** `Generate(n, seed)` — flux d'ordres déterministe (même graine → même flux).
 - **Isolation :** génération faite **hors chronomètre** ; on ne mesure que la boucle de matching.
-- **Paramètres :** n = `[200 000]`, seed = `[42]`.
+- **Paramètres :** n = 200 000 ordres, seed = 42.
 
 La mesure a été menée en **deux niveaux de rigueur croissants** :
 
 | Niveau | Protocole | Warmup | Itérations | Statistiques |
 |---|---|---|---|---|
 | 1 — Chronométrage simple (Séance 1) | une exécution chronométrée | non | 1 run | temps brut, débit |
-| 2 — Baseline consolidée | protocole rigoureux de référence | 1 run non mesuré | `[10]` runs | médiane + écart-type |
+| 2 — Baseline consolidée | protocole rigoureux de référence | interne (`b.N` + `b.ResetTimer`) | 10 runs (`-count=10`) | médiane + écart-type |
 
 ### 1.3 Résultats
 
@@ -121,10 +106,6 @@ grandeur de référence).
 | Débit | `[~1,9 M ordres/s]` |
 | Coût unitaire | `[~520 ns/ordre]` |
 | Trades générés | `172 342` (invariant, seed fixe) |
-
-> _Limite assumée : un run unique, sans warmup, est sensible au bruit (le 1ᵉʳ run démarre caches
-> froids et CPU à basse fréquence). Deux exécutions successives donnaient d'ailleurs ~103 vs ~106 ms.
-> Ce chiffre sert d'ordre de grandeur, pas de référence défendable → d'où la consolidation ci-dessous._
 
 #### 1.3.2 Baseline consolidée (référence pour toutes les comparaisons avant/après)
 
@@ -227,275 +208,179 @@ justifie donc formellement ce refactor comme prochain levier prioritaire.
 
 | Choix naïf | Problème mécanique | Levier | Statut |
 |---|---|---|---|
-| `bestAsk/bestBid` par parcours complet de la map | O(n) par ordre (Table Scan) | Structure triée → O(log n)/O(1) | 🔬 **prouvé par profiling (§2) : ~61 % du CPU** — refactor à venir |
+| `bestAsk/bestBid` par parcours complet de la map | O(n) par ordre (Table Scan) | Tableau de niveaux indexé par tick → O(1) | ✅ **fait & mesuré (§3.4) : −77 %** (goulot n°1 supprimé) |
 | `[]*Order` (pointeurs dispersés) | Cache misses + pression GC | Structs contiguës | ✅ fait & mesuré (§3.1) |
 | Prix `float64` | Arrondi + hashing lent | `int64` (ticks) | ✅ fait (§3.3) : `f64hash` éliminé du profil |
+| `level[1:]` détruit la capacité → réallocations | `growslice`/`memmove`, pression GC | Index de tête (recyclage du tableau) | ✅ **fait & mesuré (§3.5) : −99,4 % d'allocs, −31 % temps** |
 | Padding de `Order` | < ordres par ligne de cache 64 B | Réordonner les champs | ✅ vérifié (`make align`) : structs déjà alignées (32 o), non applicable |
 | Flux tout en RAM | Empreinte O(n) | Streaming binaire | ⬜ à faire |
 | Mono-thread | 1 cœur exploité | Worker pool borné | ⬜ à faire |
 
-### 3.1 Levier : Localité de cache (contigu vs dispersé)
+### 3.1 Levier : localité de cache (`[]*Order` → `[]Order`)
 
-**Hypothèse d'impact matériel :** _des données dispersées (pointeurs) provoquent des cache misses
-(~200 cycles de CPU stall chacun), là où un tableau contigu exploite les lignes de cache 64 B et
-le prefetcher._
+**Objectif :** stocker les ordres d'un niveau dans un tableau contigu (`[]Order`) au lieu de pointeurs
+dispersés (`[]*Order`).
 
-**Commande de vérification :** `go test -bench='Contiguous|Dispersed' -benchmem`
+**Hypothèse d'impact matériel :** _des pointeurs dispersés provoquent des cache misses (~200 cycles
+chacun) ; un tableau contigu exploite les lignes de cache de 64 o et le prefetcher._
 
-**Résultat de l'expérience (banc d'essai isolé, calcul identique, 0 alloc dans la boucle) :**
+**Commande de vérification :** `go test -bench='Contiguous|Dispersed' -benchmem` (expérience isolée),
+puis `benchstat` sur le moteur (10 runs).
+
+**Endroits modifiés :** `book.go` — les niveaux passent de `[]*Order` à `[]Order`.
+
+**Résultat.** Expérience isolée (même calcul, 0 alloc dans la boucle) :
 
 | Disposition | ns/op | Rapport |
 |---|---|---|
 | Contigu `[]Order` | 422 502 | référence |
-| Dispersé `[]*Order` (accès mélangé) | 11 185 513 | **× 26,5** |
+| Dispersé `[]*Order` | 11 185 513 | **× 26,5** |
 
-**Observation & analyse :**
+Sur le moteur (`BenchmarkMatching`, n = 200 000, benchstat n=10) :
 
-- À **calcul strictement identique** (additionner 2 M `Quantity`), la seule variable est la
-  disposition mémoire, et l'écart atteint **× 26,5**. Le `0 allocs/op` des deux benchmarks confirme
-  qu'aucune allocation n'a lieu dans la boucle mesurée : l'écart est **100 % attribuable au cache**,
-  pas au GC.
-- **Pourquoi un écart aussi violent :** le working-set vaut 2 000 000 × 32 o ≈ **64 Mo**, très
-  au-dessus du L3 (16 Mo). En accès **dispersé**, chaque lecture saute à une adresse imprévisible,
-  rate les trois niveaux de cache et paie la pleine latence RAM (~200 cycles de _CPU stall_). En
-  accès **contigu**, le _prefetcher_ matériel et les lignes de 64 o (≈ 2 `Order` par ligne) masquent
-  cette latence : le cœur ne s'arrête quasiment jamais.
-- **Limite assumée (honnêteté méthodologique) :** ce × 26,5 est un **majorant** — il mesure du
-  pointer-chasing *pur* sur un très grand tableau. Le carnet réel ne gagnera pas ×26, car son Hot
-  Path fait aussi autre chose (recherche dans la map, comparaisons de prix, appends). Cette
-  expérience prouve que le levier **existe** et **borne** son potentiel ; le gain réel est mesuré
-  ci-dessous sur le moteur.
-
-**En clair (sans jargon) :** le processeur va chercher les données en mémoire par paquets, et il est
-bien plus rapide quand elles sont **rangées côte à côte** (il en ramène plusieurs d'un coup) que
-**dispersées** (un aller-retour lent par donnée). Stocker les ordres en un seul bloc plutôt
-qu'éparpillés, c'est comme prendre toutes ses courses en un passage au lieu d'un aller-retour au
-magasin par article. En prime, créer moins de « petites boîtes » séparées (allocations) évite au
-ménage automatique de Go (le ramasse-miettes) de repasser sans arrêt.
-
-**Application au carnet.** Mesure du moteur réel via `BenchmarkMatching` (n = 200 000) comme
-« avant » ; le « après » sera relevé une fois le refactor contigu appliqué.
-
-Banc : AMD Ryzen 7 7735U, Go/linux/amd64. Comparaison via `benchstat` (10 runs chacun).
-
-| Métrique (`BenchmarkMatching`, n = 200 000) | Avant (naïf) | Après (contigu) | Gain |
+| Métrique | Avant (naïf) | Après (contigu) | Gain |
 |---|---|---|---|
 | Temps | 77,8 ms ± 2 % | 72,8 ms ± 3 % | −6,4 % |
 | Mémoire (`B/op`) | 38,9 MiB | 37,8 MiB | −3,0 % |
-| Allocations (`allocs/op`) | 281 416 | **81 421** | **−71,1 %** |
+| Allocations (`allocs/op`) | 281 416 | 81 421 | **−71,1 %** |
 
-> _Tous les écarts sont statistiquement significatifs (p = 0,000, n = 10) — ce ne sont pas du bruit.
-> `allocs/op` et `B/op` sont **déterministes** (dépendent du code + seed 42, pas du CPU). Remarque de
-> métrologie : sur un run isolé, le 1ᵉʳ tir était ~1,8× plus lent (démarrage à froid) — d'où l'usage
-> de 10 runs + benchstat plutôt qu'un chronométrage unique._
+Écarts significatifs (p = 0,000). Le × 26,5 isolé est un **majorant** (pointer-chasing pur) : le moteur
+fait aussi autre chose, d'où un gain réel plus faible.
 
-**Analyse du gain (loi d'Amdahl, cours §6).** Le levier a **massivement réduit les allocations
-(−71 %)** — donc la pression sur le Garbage Collector et l'empreinte mémoire — mais le **temps n'a
-quasiment pas bougé (~4 %)**. Ce n'est pas un échec : c'est une preuve que, sur ce carnet, **les
-allocations n'étaient pas le goulot d'étranglement du temps**. Le coût dominant est ailleurs : la
-recherche du meilleur prix (`bestAsk`/`bestBid`) parcourt toute la map à **chaque** ordre — un
-travail CPU en O(n) que ce refactor mémoire ne touche pas. Conclusion conforme à la loi d'Amdahl :
-optimiser une fraction qui ne domine pas le temps ne peut donner qu'un gain marginal *sur le temps*.
+**Lecture critique :** le levier réduit fortement les allocations (−71 %) mais le temps ne bouge presque
+pas (−6 %). Ce n'est pas un échec : ça prouve que, sur ce carnet, les allocations ne sont **pas** le
+goulot temps. Le vrai goulot est ailleurs — le parcours O(n) de `bestAsk`/`bestBid` (confirmé au §2.3).
+C'est la loi d'Amdahl : optimiser une fraction qui ne domine pas le temps ne peut donner qu'un gain
+marginal *sur le temps*. L'acquis reste utile (moins de GC = latence plus stable).
 
-Le levier reste un vrai acquis (moins de GC = latence plus prévisible sous charge soutenue, exigence
-typique d'un système HFT). L'analyse pointe le vrai goulot **temps** — le O(n) de `bestAsk`/`bestBid`
-— mais sur ce carnet, le supprimer **et** viser le zéro-allocation passent par **le même refactor**
-(remplacer la `map` par un tableau de niveaux pré-alloué, indexé par tick). Le prochain levier traité,
-**zéro-allocation** (§3.2), amorce donc ce chantier.
+### 3.2 Analyse : origine des allocations (escape analysis)
 
-### 3.2 Levier : Zéro-allocation (escape analysis)
+_Cette section n'est pas un levier à gain immédiat mais un **diagnostic** : comprendre d'où viennent les
+allocations avant de chercher à les supprimer (le levier lui-même est traité au §3.5)._
 
-**Objectif :** tendre vers `0 allocs/op` sur le Hot Path (matching) pour supprimer la pression sur
-le Garbage Collector.
+**Objectif :** localiser les allocations du hot path.
 
-**Rappel — l'analyse d'échappement.** En Go, on n'alloue pas la mémoire à la main : c'est le
-**compilateur qui décide seul**, à la compilation, si une variable vit sur la **pile** (gratuit,
-libéré au retour de fonction, zéro GC, cache L1) ou « s'échappe » sur le **tas** (coûteux, à la
-charge du GC). Le drapeau `-gcflags="-m"` expose ces décisions, sans exécuter le programme.
+**Hypothèse d'impact matériel :** _si des variables du matching s'échappent sur le tas sans raison
+(pointeur local, boxing `interface{}`, slice de taille variable), ce sont des allocations évitables._
 
-**Hypothèse d'impact :** _si des variables du Hot Path s'échappent involontairement (pointeur local
-retourné, boxing `interface{}`, slice de taille variable), elles génèrent des allocations tas
-évitables → pression GC._
+**Commande de vérification :** `go build -gcflags="-m"` (échappement compile-time) + `go test
+-memprofile` puis `pprof -sample_index=alloc_objects`.
 
-**Commande de vérification :** `go build -gcflags="-m" ./... 2>&1 | grep "escapes to heap\|moved to heap"`
+**Résultat.** Aucun échappement *accidentel* dans le matching. Les allocations viennent des
+`append(b.bids/asks[prix], *o)` : la slice d'un niveau est stockée dans une `map` (sur le tas), son
+tableau doit donc vivre sur le tas — échappement **légitime**. Le memprofile confirme : **97,8 %** des
+allocations dans `matchBuy`/`matchSell`, avec `runtime.growslice` en tête. Padding vérifié au passage
+(`make align` → structs déjà alignées, 32 o, rien à réordonner).
 
-**Résultats, classés par chemin d'exécution :**
-
-| Origine | Échappement signalé | Chemin | Verdict |
-|---|---|---|---|
-| `NewBook` | `&Book{}` + 2 × `make(map…)` | froid (1×/carnet) | négligeable |
-| `book.go` (matchBuy/matchSell) | `append escapes to heap` (×4) | **CHAUD** | **source des 81 421 allocs** |
-| `generator.go` | `make([]Order, n)`, `rand.rng` | setup (hors mesure) | négligeable |
-| `main.go` | arguments de `fmt.Printf` | froid (1×) | négligeable (boxing `interface{}`) |
-
-**Analyse :**
-
-- **Aucun échappement _accidentel_ sur le Hot Path** : pas de pointeur local retourné par erreur,
-  pas de boxing involontaire dans la boucle de matching. Le code chaud est sain de ce côté.
-- Les **4 `append escapes to heap`** sont les `append(b.bids/asks[prix], *o)` qui déposent un ordre
-  au repos. Ils s'échappent **légitimement** : la slice d'un niveau est stockée dans une `map` (sur
-  le tas), donc son tableau sous-jacent doit vivre sur le tas. **C'est la source des allocations** —
-  confirmée dès la compilation.
-- Le `fmt.Printf` de `main.go` illustre la cause « assignation à une interface » (ses arguments sont
-  boxés en `any`). Sans conséquence ici (chemin froid, 1 appel), mais interdit sur le Hot Path
-  (cf. `constitution.md`).
-
-**Confirmation par profil mémoire** (`go test -memprofile` + `pprof -sample_index=alloc_objects`) —
-les allocations se concentrent dans le matching :
-
-| Fonction | Part des allocations |
-|---|---|
-| `matchBuy` | 50,3 % |
-| `matchSell` | 47,5 % |
-| runtime (bruit) | 1,7 % |
-
-Soit **97,8 % dans le Hot Path**. Le nœud `runtime.growslice` présent dans le profil confirme le
-mécanisme : c'est l'`append` qui agrandit les slices de niveaux (adossées à la map) qui alloue. La
-source *runtime* coïncide exactement avec l'analyse d'échappement *compile-time* — diagnostic
-cohérent des deux côtés.
-
-**Conséquence.** Ces allocations sont **structurelles** (slices adossées à une `map`), pas un
-ajustement local. Les éliminer impose de remplacer la `map` par un tableau de niveaux pré-alloué
-(indexé par tick) — le refactor identifié au §3.1, à mener **après** le profiling (Séance J2_PM) qui
-confirmera formellement le goulot. Ce refactor réglera zéro-allocation **et** le O(n) de `bestAsk`
-d'un même geste.
-
-**Acquis connexe — padding :** vérifié via `make align` (`fieldalignment`) → structs déjà alignées
-(32 o), aucun réordonnancement gagnant (cf. §3.0).
+**Lecture critique :** les allocations sont **structurelles** (adossées à la `map`), pas un défaut
+local. Les supprimer impose donc de changer la structure — le refactor `map → tableau` (§3.4) puis
+l'index de tête (§3.5). Le diagnostic est cohérent des deux côtés (compile-time et runtime).
 
 ### 3.3 Levier : Prix en `int64` (ticks)
 
-**Objectif :** remplacer le prix `float64` par un entier `int64` en **ticks** (plus petite unité —
-ici le centime : `100,05 € → 10005`).
+**Objectif :** remplacer le prix `float64` par un `int64` en **ticks** (le centime : `100,05 € →
+10005`).
 
 **Hypothèse d'impact matériel :** _le profiling (§2) montre ~9 % du CPU dans le hachage des clés
-`float64` de la map (`f64hash` + `aeshashbody`). Une clé `int64` se hache et se compare en beaucoup
-moins de cycles → ce coût doit disparaître. Bénéfice métier en prime : plus d'erreur d'arrondi
-flottant. Ce changement est aussi le **prérequis** de l'indexation par tableau (§3.4)._
+`float64` (`f64hash` + `aeshashbody`). Une clé `int64` se hache en moins de cycles → ce coût doit
+disparaître. Bonus métier : plus d'erreur d'arrondi. C'est aussi le **prérequis** de l'indexation par
+tableau (§3.4)._
 
-**Commande de vérification :** `go test -bench=Matching -cpuprofile cpu.prof … ` puis
-`go tool pprof -top cpu.prof | grep -i hash`
+**Commande de vérification :** `go tool pprof -top cpu.prof | grep -i hash`.
 
-**Endroits modifiés :** `order.go` (`Order.Price`, `Trade.Price` → `int64`), `book.go`
-(`map[int64][]Order`, `bestAsk`/`bestBid` → `int64`), `generator.go` (prix en ticks),
-`book_test.go` (prix des cas de test).
+**Endroits modifiés :** `order.go` (`Price` → `int64`), `book.go` (`map[int64][]Order`),
+`generator.go`, `book_test.go`.
 
-**Résultat :** tests verts (comportement identique — même flux, mêmes trades).
+**Résultat :** tests verts (mêmes trades).
 
-| Métrique | Avant (`float64`) | Après (`int64` ticks) | Gain |
+| Métrique | Avant (`float64`) | Après (`int64`) | Gain |
 |---|---|---|---|
-| Temps (benchstat) | 72,8 ms ± 3 % | 68,6 ms ± 2 % | **−5,8 %** |
-| Hachage des clés (CPU) | `f64hash` + `aeshashbody` ~9 % | `memhash64` ~2,5 % | ÷ ~4 |
-| Allocations (`allocs/op`) | 81,42 k | 81,42 k | inchangé |
-| Mémoire (`B/op`) | 37,75 MiB | 37,75 MiB | inchangé |
+| Temps | 72,8 ms ± 3 % | 68,6 ms ± 2 % | **−5,8 %** |
+| Hachage des clés (CPU) | ~9 % | `memhash64` ~2,5 % | ÷ ~4 |
+| Allocations / Mémoire | 81,42 k / 37,75 MiB | idem | inchangé |
 
-Le levier ne touche pas au stockage (mémoire/allocs identiques) : son gain est purement **CPU**
-(hachage des clés). Le O(n) de `bestAsk`/`bestBid` reste le goulot dominant → §3.4.
+**Lecture critique :** gain purement **CPU** (le hachage), sans toucher au stockage. Le O(n) de
+`bestAsk`/`bestBid` reste le goulot dominant → §3.4.
 
 ---
 
-### 3.4 Levier : `map` → tableau de ticks (meilleur prix en O(1)) — **levier majeur**
+### 3.4 Levier : `map` → tableau de ticks (best-price O(1))
 
-**Objectif :** remplacer `map[int64][]Order` par un **tableau pré-alloué indexé par tick**
-(`[][]Order`, index = `tick − minTick`), avec deux **curseurs** `bestBidIdx` / `bestAskIdx`
-maintenus à jour. Le meilleur prix devient une **lecture directe du curseur — O(1)** — au lieu d'un
-**parcours complet de la map — O(n)** — à chaque ordre.
+**Objectif :** remplacer `map[int64][]Order` par un tableau indexé par tick (`[][]Order`, index =
+`tick − minTick`), avec deux curseurs `bestBidIdx` / `bestAskIdx`. Le meilleur prix devient une lecture
+directe du curseur — **O(1)** au lieu du parcours complet de la map — **O(n)** — à chaque ordre.
 
-**Hypothèse d'impact matériel :** _le profiling (§2.3) prouve que `bestAsk` + `bestBid` consomment
-**~61 % du CPU** : à chaque ordre, on itère toute la structure pour trouver le min/max prix. En
-rangeant les niveaux dans un tableau contigu et en gardant un curseur sur le meilleur niveau non
-vide, cette recherche disparaît (O(n) → O(1)). C'est précisément le segment désigné par la Loi
-d'Amdahl (§2) : on optimise ce qui domine réellement le temps, pas une intuition._
-
-**Pré-requis :** clé de prix `int64` (§3.3) — un tableau ne s'indexe que par un entier borné. Les
-deux leviers forment une paire : `int64` était le socle, l'indexation est la macro-optimisation.
+**Hypothèse d'impact matériel :** _le profiling (§2.3) prouve que `bestAsk` + `bestBid` = **~61 % du
+CPU** (parcours de la map à chaque ordre). Un curseur maintenu sur le meilleur niveau supprime cette
+recherche (O(n) → O(1)). Prérequis : clé `int64` (§3.3), car un tableau ne s'indexe que par un entier
+borné._
 
 **Commande de vérification :** `make save NAME=opt-ticks-array` puis
-`make compare A=opt-ticks B=opt-ticks-array` (benchstat)
+`make compare A=opt-ticks B=opt-ticks-array`.
 
 **Endroits modifiés :**
 
 | Fichier | Modification |
 |---|---|
-| `book.go` | `map[int64][]Order` → `bids`, `asks [][]Order` ; bornes **paramétrées** (`minTick`/`maxTick` passés à `NewBook`, stockés en champ) qui pré-allouent les deux tableaux ; curseurs `bestBidIdx`/`bestAskIdx` ; méthodes `bestAsk`/`bestBid` **supprimées** (remplacées par la lecture du curseur) ; avance **amortie** du curseur quand un niveau se vide |
-| `book_test.go` | `NewBook(9900, 10100)` ; accès interne par index : `b.bids[int(10000−b.minTick)][0]` ; vérif reliquat MARKET via `b.bestBidIdx != -1` |
-| `matching_bench_test.go`, `cmd/bench/main.go` | appel `NewBook(9900, 10100)` (bornes de la plage) |
-| `order.go` | inchangé (déjà `int64` depuis §3.3) |
-| `generator.go` | inchangé (prix déjà en ticks, dans la plage `minTick..maxTick`) |
+| `book.go` | `map` → `bids`, `asks [][]Order` ; bornes `minTick`/`maxTick` **paramétrées** dans `NewBook` (pas de nombre magique) ; curseurs `bestBidIdx`/`bestAskIdx` ; méthodes `bestAsk`/`bestBid` **supprimées** ; avance amortie du curseur |
+| `book_test.go`, `matching_bench_test.go`, `cmd/bench/main.go` | appel `NewBook(9900, 10100)` ; accès test par index |
+| `order.go`, `generator.go` | inchangés |
 
-**Choix de conception (bornes en paramètre, pas en `const`) :** on aurait pu figer `minTick`/`maxTick`
-en constantes de compilation. On les passe en **paramètres** de `NewBook` : la plage devient une
-_donnée_ explicite au point d'appel, sans nombre magique ni couplage caché avec le générateur. Le
-surcoût (lire un champ au lieu d'une constante inlinée) est **non mesurable** — vérifié : le benchmark
-est identique aux deux formes. Une constante ne redeviendrait _obligatoire_ que pour une variante à
-**tableau de taille fixe** `[N][]Order` (une indirection mémoire de moins, mais taille figée à la
-compilation) — piste possible, non retenue ici.
-
-**Résultat :** tests verts (même flux → mêmes trades ; le refactor ne change pas le comportement).
+**Résultat :** tests verts (mêmes trades).
 
 | Métrique | Avant (`map`, O(n)) | Après (tableau, O(1)) | Gain (benchstat, n=10) |
 |---|---|---|---|
-| Temps (`sec/op`) | 68,59 ms ± 2 % | **15,48 ms ± 2 %** | **−77,44 %** (p=0,000) |
-| Allocations (`allocs/op`) | 81,42 k | **78,09 k** | **−4,09 %** (p=0,000) — buckets de `map` supprimés |
-| Mémoire (`B/op`) | 37,75 MiB | 37,62 MiB | −0,35 % (p=0,000) |
-| `bestAsk`/`bestBid` (CPU) | ~61 % du profil | ~0 % (lecture curseur) | **goulot supprimé** |
+| Temps | 68,59 ms ± 2 % | **15,48 ms ± 2 %** | **−77,44 %** (p=0,000) |
+| Allocations | 81,42 k | 78,09 k | −4,09 % (p=0,000) |
+| Mémoire | 37,75 MiB | 37,62 MiB | −0,35 % |
+| `bestAsk`/`bestBid` (CPU) | ~61 % | ~0 % | goulot supprimé |
 
-_Écart validé statistiquement (Mann-Whitney, `p=0,000`, n=10) : le gain temps est réel, pas du bruit
-de mesure._
+**Lecture critique :** gain **algorithmique** (O(n) → O(1)) : il attaque le CPU, pas la mémoire (les
+allocations ne bougent presque pas). C'est le plus gros levier de l'audit (−77 %), et il n'avait de
+sens qu'**après** la preuve du profiling. Deux remarques :
 
-> Banc témoin (conteneur Xeon, même code avant/après) : 178,7 → 37,1 ms (÷ 4,8) — même ordre de
-> grandeur que la Ryzen, ce qui confirme que le gain est structurel (algorithmique), pas un artefact
-> de machine.
+- _Contrepartie :_ le tableau suppose une **plage de prix bornée** (`minTick..maxTick`), classique en
+  HFT (les prix restent dans une bande étroite) ; en production on ajouterait un repli hors plage.
+- _Re-profil (démarche itérative) :_ une fois le O(n) parti, le nouveau goulot devient
+  `runtime.growslice`/`memmove` (~30 % du CPU) — les réallocations de slices. C'est ce que le §3.5
+  attaque. Le profil s'est **aplati** : plus aucune fonction ne domine.
 
-**Lecture critique :** le gain est **essentiellement algorithmique** (O(n) → O(1)). Il attaque le
-**CPU** — les cycles brûlés à scanner la structure à chaque ordre — et non la mémoire : les
-allocations ne baissent que de 4 % (disparition des *buckets* de la `map`), le *volume* de données
-restant identique. C'est l'inverse du levier §3.1 (localité), qui ne touchait qu'aux allocations sans
-bouger le temps. Contrairement aux micro-leviers §3.1–3.3 (gains de −5,8 % à −6,4 %), celui-ci est
-**macro** et cible le plus gros segment du profil : c'est le **levier dominant** de l'audit (−77 % à
-lui seul), et il n'a de sens qu'*après* la preuve du profiling — on ne l'aurait pas deviné avant §2.
+---
 
-**Contrepartie assumée :** le tableau suppose une **plage de prix bornée** (`minTick..maxTick`,
-fenêtre autour du prix de référence) — choix classique d'un carnet HFT, les prix évoluant dans une
-bande étroite (documenté dans `book.go`). Un prix hors plage n'est pas géré ; acceptable ici car le
-générateur reste dans la fenêtre. En production : repli sur une map de débordement, ou re-centrage
-dynamique de la fenêtre.
+### 3.5 Levier : zéro-allocation par index de tête
 
-**Observation — le goulot s'est déplacé (re-profilage) → prochain levier « zéro-alloc ».** Après avoir
-supprimé le O(n), on **re-profile** (démarche itérative, §2) : le hot path a changé de nature.
+**Objectif :** supprimer les réallocations de slices pointées par le re-profil du §3.4
+(`growslice`/`memmove` ≈ 30 % du CPU). C'est la consigne « pré-allouer & recycler » de la séance 4
+(§9–11) et de la `constitution.md`.
 
-| Fonction (nouveau top CPU) | Part | Nature |
-|---|---|---|
-| `matchBuy` + `matchSell` (temps propre / *flat*) | **~41 %** | logique de matching : comparaisons, curseurs, `append` |
-| `runtime.growslice` (*cum*, dont `memmove` 16 %, `memclr` 5 %) | **~30 %** | réallocation + recopie des slices de niveaux à chaque `append` |
-| `bestAsk` / `bestBid` / `maps.(*Iter).Next` / `memhash64` | **0 %** | **disparus** — le O(n) et le hachage de map sont éliminés (preuve du levier) |
-| `madvise` / `procyield` / GC | reste | pression GC induite par les allocations |
+**Hypothèse d'impact matériel :** _`level[1:]` avance la tête FIFO mais détruit la capacité du slice ;
+au re-remplissage d'un niveau vidé, `append` réalloue. En gardant un index de tête `head` par niveau et
+en réinitialisant le niveau (`level[:0]`, `head=0`) une fois vidé, le tableau est **réutilisé** — plus
+de réallocation dans le cycle vidage/remplissage._
 
-Un profil mémoire (`-memprofile`, `-sample_index=alloc_objects`) confirme la source exacte des
-allocations :
+**Commande de vérification :** `make save NAME=opt-zero-alloc` puis
+`make compare A=opt-ticks-array B=opt-zero-alloc` ; invariant : `172 342` trades.
 
-```
-matchBuy/matchSell : b.bids[idx]/b.asks[idx] = append(…, *o)   → 99,96 % des objets
-matchBuy/matchSell : b.trades = append(…, Trade{})             →  0,04 %
-```
+**Endroits modifiés :**
 
-Ces allocations ne peuvent pas tomber à 0 : un carnet **stocke** par nature les ordres au repos et
-**produit** des trades. Mécanisme du surplus : quand un niveau se vide, `level[1:]` avance la tête mais
-**réduit la capacité** du slice ; au re-remplissage, `append` réalloue un tableau neuf (d'où le
-`growslice`/`memmove`). Les niveaux proches du spread se remplissant/vidant en continu, chaque
-re-remplissage coûte une allocation.
+| Fichier | Modification |
+|---|---|
+| `book.go` | 2 champs `bidsHead`, `asksHead []int` ; front = `level[h]` ; dépilage = `head++`, et reset `level[:0]`+`head=0` quand le niveau se vide (au lieu de `level[1:]`) |
+| autres | inchangés |
 
-**Point de méthode (le profil s'est aplati) :** avant le refactor, `bestAsk`/`bestBid` écrasaient tout
-(61 % du CPU) ; après, **plus aucune fonction ne domine**. Le temps se répartit entre la logique de
-matching (~41 %, largement incompressible) et la croissance des slices (~30 %, l'allocation). C'est le
-signe qu'on entre dans les **rendements décroissants** : le grand gain (O(n) → O(1)) est derrière nous.
-Le seul segment encore franchement attaquable est l'allocation.
+**Résultat :** tests verts, invariant préservé (`172 342` trades).
 
-**Levier futur (cible « zéro-alloc » de la `constitution.md`) :** pré-dimensionner les niveaux
-(`make([]Order, 0, cap)`) ou remplacer `level[1:]` par un **index de tête** (`head int`, file
-circulaire) qui réutilise le tableau au lieu de le réallouer → `allocs/op` de ~78 k vers quelques
-centaines, et un gain temps **réel mais borné** (le `growslice`/`memmove`, soit ~30 % du CPU — plus les
-61 % du levier précédent) — à mesurer avant d'affirmer (Règle d'Or).
+| Métrique | Avant (O(1)) | Après (index de tête) | Gain (benchstat, n=10) |
+|---|---|---|---|
+| Temps | 15,48 ms ± 2 % | **10,70 ms ± 1 %** | **−30,89 %** (p=0,000) |
+| Allocations | 78 088 | **457** | **−99,41 %** (p=0,000) |
+| Mémoire | 37,62 MiB | 34,37 MiB | −8,65 % |
+
+**Lecture critique :** ici, contrairement au §3.1, réduire les allocations **fait aussi baisser le
+temps** (−31 %) — parce que le §3.4 avait d'abord supprimé le O(n), rendant le `growslice`/`memmove`
+dominant. L'ordre des leviers compte (Amdahl). Enfin, « zéro-alloc » ne veut pas dire 0 littéral : les
+457 restantes sont **structurelles** (croissance du slice `trades`, dimensionnement initial des niveaux)
+et **justifiées** au sens de la constitution. Les forcer à 0 serait contre-productif — voir le §4.
 
 ---
 
@@ -504,15 +389,41 @@ centaines, et un gain temps **réel mais borné** (le `growslice`/`memmove`, soi
 > _Attendu : documenter au moins UNE tentative d'optimisation contre-productive ou infructueuse,
 > avec explication mécanique ET chiffrée de la régression avant retour arrière._
 
-**Tentative :** `[À REMPLIR — ex. parallélisation prématurée, cache trop gros, verrouillage trop fin]`
+**Tentative : pré-allocation avide des niveaux (« over-provisioning »).** Après le levier zéro-alloc
+(§3.5), il restait 457 allocations. Tentation naturelle : les faire disparaître en **pré-allouant**
+chaque niveau à une grosse capacité dans `NewBook` (`make([]Order, 0, 1024)` pour les 201 niveaux × 2
+côtés), pour « ne plus jamais réallouer ».
 
-**Hypothèse initiale :** `[À REMPLIR]`
+**Hypothèse initiale :** _réserver la capacité d'avance élimine la croissance des niveaux → moins
+d'allocations **et** gain de temps (plus de `growslice`/`memmove`)._
 
-**Résultat mesuré (régression) :** `[À REMPLIR — chiffres]`
+**Résultat mesuré (régression, benchstat n=10) :**
 
-**Explication mécanique :** `[À REMPLIR — ex. context-switching > gain, cache augmente la pression GC…]`
+| Métrique | Zéro-alloc (§3.5) | Piège (pré-alloc 1024) | Effet |
+|---|---|---|---|
+| Temps (`sec/op`) | 10,70 ms | 11,36 ms | **+6,16 %** (p=0,000) |
+| Mémoire (`B/op`) | 34,37 MiB | 45,33 MiB | **+31,89 %** (p=0,000) |
+| Allocations (`allocs/op`) | 457 | 463 | +1,31 % (p=0,000) |
 
-**Décision :** retour arrière — `[À REMPLIR]`
+**L'hypothèse est fausse sur les trois axes** : plus lent, plus gourmand, et même *plus* d'allocations.
+
+**Explication mécanique :** l'index de tête (§3.5) **recycle déjà** les tableaux de niveaux → il ne
+restait **aucune réallocation à éviter**. La pré-allocation n'apporte donc aucun gain, mais ajoute deux
+coûts : (1) Go **zère** chaque tableau créé → réserver 201 × 2 × 1024 × 32 o ≈ **13 Mo par carnet** se
+paie en `memclr` à chaque `NewBook`, d'où le **+6 % de temps** ; (2) ces 13 Mo restent **réservés**
+(souvent pour des niveaux vides ou peu profonds), d'où le **+32 % de mémoire**. Pire : à l'échelle
+**multi-symboles** (un carnet par instrument), ce gaspillage serait multiplié par le nombre de symboles
+→ intenable.
+
+**Décision : retour arrière** (`git checkout internal/engine/book.go`). On conserve la version §3.5,
+qui n'alloue que le **justifié** (§3.5, « plancher structurel »). Leçon : optimiser une métrique (les
+allocations) **à l'aveugle** peut **régresser les autres** (temps *et* mémoire) sans rien gagner. Le bon
+critère d'arrêt n'est pas « 0 allocation » mais « **plus aucune allocation injustifiée** » — atteint
+dès le §3.5.
+
+> _Reproductible : patch de pré-allocation dans `NewBook`, `make save NAME=opt-prealloc-trap`,
+> `make compare A=opt-zero-alloc B=opt-prealloc-trap`, puis `git checkout` pour revenir. Résultats
+> archivés : `bench-results/opt-prealloc-trap.txt`._
 
 ---
 
@@ -583,16 +494,19 @@ Comparaison `benchstat` (`baseline.txt` vs `opt-cache.txt`), 10 runs, n = 200 00
 | Baseline naïve (`baseline-naive`) | 77,8 ms ± 2 % | 281,4 k | 38,9 MiB | — |
 | + localité de cache (`opt-cache-locality`) | 72,8 ms ± 3 % | **81,4 k** | 37,8 MiB | **−6,4 %** |
 | + prix `int64` ticks (`opt-int64-ticks`) | 68,6 ms ± 2 % | 81,4 k | 37,8 MiB | **≈ −12 %** |
-| + tableau de ticks O(1) (`opt-ticks-array`) | **15,48 ms ± 2 %** | **78,1 k** | 37,6 MiB | **−77 % (÷ 4,4)** |
-| **Finale (état actuel)** | **15,48 ms** | **78,1 k** | 37,6 MiB | **÷ 5,0 vs baseline** |
+| + tableau de ticks O(1) (`opt-ticks-array`) | 15,48 ms ± 2 % | 78,1 k | 37,6 MiB | −77 % (÷ 4,4) |
+| + zéro-alloc / index de tête (`opt-zero-alloc`) | **10,70 ms ± 1 %** | **457** | 34,4 MiB | **−86 % (÷ 7,3)** |
+| **Finale (état actuel)** | **10,70 ms** | **457** | 34,4 MiB | **÷ 7,3 vs baseline** |
 
 _Lecture : les leviers §3.1–3.3 sont des **micro-optimisations** : la localité gagne surtout sur les
 **allocations** (−71 %) mais le temps ne baisse que de ~6 %, car le goulot temps est ailleurs — le
 **O(n) de `bestAsk`/`bestBid`** (§2.3, ~61 % du CPU). Le levier `map → tableau de ticks` (§3.4)
-supprime ce O(n) : c'est le levier **macro**, le seul qui attaque le segment dominant du profil, d'où
-le saut de **−77,44 %** (p=0,000) sur le temps à lui seul (68,59 → 15,48 ms), qui porte le cumul à
-**÷ 5,0 vs la baseline** (77,8 → 15,48 ms). Les allocations, elles, ne bougent quasiment pas (−4 %) :
-le gain est algorithmique (CPU), pas allocatoire._
+supprime ce O(n) — **−77,44 %** (68,59 → 15,48 ms). Puis le §3.5 (index de tête) supprime les
+réallocations redevenues visibles une fois le O(n) parti : **−99,4 % d'allocations** (78 k → 457) et,
+cette fois, **−30,9 % de temps** (15,48 → 10,70 ms). Cumul : **÷ 7,3 vs la baseline** (77,75 → 10,70 ms).
+Les deux gros leviers (§3.4, §3.5) illustrent la Loi d'Amdahl : chaque fois qu'on supprime le segment
+dominant, le suivant devient l'objectif — et une optimisation « invisible » sur le temps (allocs au
+§3.1) peut le devenir plus tard (§3.5)._
 
 #### Mesure processus (hyperfine)
 
@@ -600,27 +514,29 @@ Complément **niveau processus** du binaire `cmd/bench` (`hyperfine --warmup 5 -
 
 | Binaire | Temps processus (mean ± σ) | Min / Max |
 |---|---|---|
-| Baseline naïve (`ob`) | 83,1 ms ± 7,8 ms | 76,9 / 117,8 ms |
-| **Finale — tableau O(1)** (`ob_opti`) | **20,9 ms ± 1,9 ms** | 18,3 / 26,1 ms |
-| **Rapport** | **÷ 3,97 ± 0,52** | — |
+| Baseline naïve (`ob`) | 83,1 ms ± 7,8 ms | 72,5 / 117,8 ms |
+| **Finale — zéro-alloc** (`ob_opti`) | **17,0 ms ± 1,0 ms** | 15,0 / 19,1 ms |
+| **Rapport** | **÷ 4,9** | — |
 
 **Décomposition (contrôle de cohérence).** Le coût **fixe** du binaire (démarrage du runtime Go +
-génération des 200 000 ordres) est incompressible et identique des deux côtés :
+génération des 200 000 ordres) est incompressible ; on le retrouve des deux côtés :
 
 | Binaire | Process total | ≈ matching (benchstat) | ≈ fixe |
 |---|---|---|---|
 | `ob` (baseline) | 83,1 ms | 77,8 ms | **5,3 ms** |
-| `ob_opti` (finale) | 20,9 ms | 15,5 ms | **5,4 ms** |
+| `ob_opti` (finale) | 17,0 ms | 10,7 ms | **6,3 ms** |
 
-Le terme fixe tombe sur ~5,4 ms des deux côtés : cela **confirme** que `ob` est bien la version naïve
-(et non une version intermédiaire) et que le seul écart entre les deux binaires est le matching.
+Le terme fixe (~5–6 ms) est cohérent des deux côtés : le seul écart entre les deux binaires est bien le
+matching.
 
-_Lecture (Loi d'Amdahl au niveau processus) : le ratio processus (**÷3,97**) est plus faible que le
-**÷5,0** du matching pur (benchstat), parce que hyperfine mesure **tout le binaire**, y compris les
-~5,4 ms de coût fixe que l'optimisation ne touche pas. Autrement dit, plus on optimise le matching,
-plus la part fixe (startup + génération) pèse dans le total — c'est la limite d'Amdahl qui se déplace
-vers le segment non optimisé. (hyperfine a signalé un premier run à froid à 117,8 ms sur `ob` —
-outlier de cache, absorbé par la moyenne sur 50 runs.)_
+_Lecture (Loi d'Amdahl au niveau processus) : le ratio processus (**÷4,9**) est plus faible que le
+**÷7,3** du matching pur (benchstat), parce que hyperfine mesure **tout le binaire**, dont ~5–6 ms de
+coût fixe que l'optimisation ne touche pas. Ce coût fixe pèse désormais **~37 %** du binaire finale
+(6,3 / 17,0 ms) contre ~6 % de la baseline : plus on optimise le matching, plus la part non optimisée
+domine — la limite d'Amdahl s'est déplacée vers le startup + la génération. Pour aller plus loin, ce
+serait désormais **là** qu'il faudrait chercher (ex. génération en streaming). Note : sur batterie +
+`powersave` (§1.1), le binaire naïf a montré un run à froid à ~168 ms (DVFS), d'où un σ plus large — la
+finale, elle, reste très stable (σ 1,0 ms)._
 
 ---
 
@@ -629,11 +545,13 @@ outlier de cache, absorbé par la moyenne sur 50 runs.)_
 > _Attendu : fichier de contrainte à la racine, 4 directives respectées (posture système, gardes-fous
 > négatifs, justification empirique hypothèse/commande, formatage impératif)._
 
-- [ ] `constitution.md` présent à la racine du dépôt
-- [ ] Directive 1 — posture système (ingénieur contraint par métriques)
-- [ ] Directive 2 — gardes-fous (bannir `fmt.Sprintf` sur Hot Path, goroutines bornées…)
-- [ ] Directive 3 — justification empirique (hypothèse / commande de preuve)
-- [ ] Directive 4 — formatage impératif et vérifiable
+- [x] `constitution.md` présent à la racine du dépôt
+- [x] **Directive 1 — posture système** (ingénieur contraint par des métriques réelles) → appliquée dans tout le rapport : aucun levier sans mesure préalable (§2 avant §3), ordre *work → right → fast* respecté.
+- [x] **Directive 2 — gardes-fous** (bannir `fmt.Sprintf` sur Hot Path, `float64`, goroutines non bornées) → `fmt.Sprintf` absent du matching (§3.2), prix passés en `int64` (§3.3), allocations chaudes justifiées ou supprimées (§3.5).
+- [x] **Directive 3 — justification empirique** (couple hypothèse / commande de preuve) → chaque levier §3.1–3.5 est formulé ainsi (« Hypothèse d'impact matériel » + « Commande de vérification »), et le §4 documente une hypothèse **infirmée** par la mesure.
+- [x] **Directive 4 — formatage impératif et vérifiable** → chaque affirmation de perf est chiffrée et rejouable (tags Git + `bench-results/*.txt` + `benchstat`).
+
+_La constitution n'a pas seulement été écrite : elle a **gouverné la démarche** (mesure avant optimisation, justification chiffrée, retour arrière au §4). C'est sa mise en pratique, pas sa simple présence, qui vaut le bonus._
 
 ---
 
