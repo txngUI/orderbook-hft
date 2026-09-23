@@ -2,6 +2,9 @@ package main
 
 import (
 	"fmt"
+	"os"               // ← AJOUT : créer le fichier mutex.prof
+	"runtime"          // ← AJOUT : activer le profil de contention
+	"runtime/pprof"    // ← AJOUT : écrire le profil
 	"sync"
 	"time"
 
@@ -70,6 +73,7 @@ func best(f func() (time.Duration, int)) (time.Duration, int) {
 }
 
 func main() {
+	runtime.SetMutexProfileFraction(1) // ← AJOUT : active le profil de contention de verrou
 	orders := feed.Generate(nOrders, seed)
 
 	tSeq, trSeq := best(func() (time.Duration, int) { return runSequential(orders) })
@@ -84,5 +88,12 @@ func main() {
 		}
 		fmt.Printf("contendu   (%2d goroutines) : %-12v  trades=%d  (×%.2f vs séq)%s\n",
 			g, t, tr, float64(t)/float64(tSeq), flag)
+	}
+
+	// ← AJOUT : dump du profil de contention à la fin
+	if f, err := os.Create("mutex.prof"); err == nil {
+		pprof.Lookup("mutex").WriteTo(f, 0)
+		f.Close()
+		fmt.Println(">> mutex.prof écrit — analyser : go tool pprof -top mutex.prof")
 	}
 }

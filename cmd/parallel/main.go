@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"runtime"
 	"sync"
@@ -12,26 +13,43 @@ import (
 )
 
 const (
-	numSymbols      = 64        // 64 carnets indépendants (≈ 4 par cœur sur 16 threads)
+	numSymbols      = 64
 	ordersPerSymbol = 200_000
 	baseSeed        = 42
 )
 
-func processSymbol(sym int) int {
+var bookPool = sync.Pool{New: func() any { return engine.NewBook(9900, 10100) }}
+
+func processSymbol(sym int, usePool bool) int {
 	orders := feed.Generate(ordersPerSymbol, int64(baseSeed+sym))
-	book := engine.NewBook(9900, 10100)
+	var book *engine.Book
+	if usePool {
+		book = bookPool.Get().(*engine.Book)
+		book.Reset()
+	} else {
+		book = engine.NewBook(9900, 10100)
+	}
 	for i := range orders {
 		o := orders[i]
 		book.Submit(&o)
 	}
-	return len(book.Trades())
+	n := len(book.Trades())
+	if usePool {
+		bookPool.Put(book)
+	}
+	return n
 }
 
 func main() {
+	pool := flag.Bool("pool", false, "recycler les carnets via sync.Pool")
+	flag.Parse()
+
 	workers := runtime.GOMAXPROCS(0)
 	jobs := make(chan int, numSymbols)
 	var totalTrades atomic.Int64
 
+	var m0 runtime.MemStats
+	runtime.ReadMemStats(&m0)
 	start := time.Now()
 
 	for s := 0; s < numSymbols; s++ {
@@ -45,13 +63,16 @@ func main() {
 		go func() {
 			defer wg.Done()
 			for sym := range jobs {
-				totalTrades.Add(int64(processSymbol(sym)))
+				totalTrades.Add(int64(processSymbol(sym, *pool)))
 			}
 		}()
 	}
 	wg.Wait()
-
 	elapsed := time.Since(start)
-	fmt.Printf("workers=%d | symboles=%d (%d ordres) | trades=%d | temps=%v\n",
-		workers, numSymbols, ordersPerSymbol, totalTrades.Load(), elapsed)
+
+	var m1 runtime.MemStats
+	runtime.ReadMemStats(&m1)
+	fmt.Printf("pool=%-5v workers=%d | temps=%-12v | trades=%d | alloc cumulé=%d MiB | Sys=%d MiB | GC=%d\n",
+		*pool, workers, elapsed, totalTrades.Load(),
+		(m1.TotalAlloc-m0.TotalAlloc)/1024/1024, m1.Sys/1024/1024, m1.NumGC-m0.NumGC)
 }
