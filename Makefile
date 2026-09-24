@@ -73,3 +73,23 @@ clean:
 snapshot:
 	go run ./cmd/snapshot
 	@echo ">> ouvre snapshot.html dans un navigateur"
+
+# ── Serveur REST (Version A) ─────────────────────────────────────────────────
+server-rest:
+	go run ./cmd/server-rest
+
+server-rest-build:
+	go build -o ob-rest ./cmd/server-rest
+
+server-grpc:
+	go run ./cmd/server-grpc
+
+server-grpc-build:
+	go build -o ob-grpc ./cmd/server-grpc
+
+proto:
+	protoc \
+		--go_out=. --go_opt=paths=source_relative \
+		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
+		proto/order.proto
+	mv proto/order.pb.go proto/order_grpc.pb.go internal/pb/

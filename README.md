@@ -7,6 +7,8 @@ Le moteur ingère un flux d'ordres d'achat/vente et les apparie en temps réel p
 transactions, en servant de support à une démarche d'optimisation mesurée (baseline → profiling →
 leviers → comparatif).
 
+** Ce readme n'est pas le rapport d'audit, il se trouve à la racine sous le nom RAPPORT-AUDIT disponible en .dm et en pdf**
+
 ## Résultats (séances 1–4)
 
 De la baseline naïve à la version optimisée, sur `BenchmarkMatching` (n = 200 000, benchstat n=10,

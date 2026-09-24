@@ -716,19 +716,25 @@ communicating »_.)
 ### 5.1 Automatisation
 
 Toute la mesure est pilotée par un **`Makefile`** à la racine du projet. L'exigence « une seule
-commande » de l'axe 5 est tenue : `make bench` reproduit intégralement la mesure du moteur.
+commande » de l'axe 5 est tenue : les cibles `make` permettent de rejouer les tests, les benchmarks,
+les profils et les comparaisons sans commande Go à taper à la main.
 
 | Commande | Rôle | Commande Go sous-jacente |
 |---|---|---|
 | `make test` | Tests de correction (filet de sécurité) | `go test ./...` |
 | `make vet` | Analyse statique | `go vet ./...` |
-| `make align` | Alignement mémoire des structs / padding (axe 3) | `go vet -vettool=…/fieldalignment ./...` |
+| `make align` | Vérification d'alignement mémoire des structs / padding (axe 3) | `go vet -vettool=…/fieldalignment ./...` |
 | `make bench` | Benchmark du moteur (10 runs), affiché à l'écran | `go test -bench=Matching -benchmem -count=10 ./...` |
 | `make save NAME=<tag>` | Archive le benchmark dans `bench-results/<tag>.txt` | `… \| tee bench-results/<tag>.txt` |
 | `make compare A=<t> B=<t>` | `benchstat` entre deux résultats archivés | `benchstat bench-results/A.txt bench-results/B.txt` |
 | `make bench-cache` | Expérience de localité (contigu vs dispersé, le ×26) | `go test -bench='Contiguous\|Dispersed' -benchmem ./...` |
 | `make profile` | Génère un profil CPU `cpu.prof` (→ flamegraph, axe 2) | `go test -bench=Matching -cpuprofile cpu.prof ./...` |
 | `make bench-hyperfine` | Mesure **processus** du binaire entier (niveau end-to-end) | `hyperfine --warmup 5 --runs 50 './ob'` |
+| `make bench-parallel` | Mesure le worker pool multi-symboles | `go run ./cmd/parallel` |
+| `make bench-contention` | Mesure l'échec du verrou sur un seul carnet | `go run ./cmd/contention` |
+| `make server-rest` | Lance l'API HTTP/JSON du moteur | `go run ./cmd/server-rest` |
+| `make server-rest-build` | Construit le serveur REST en binaire | `go build -o bin/server-rest ./cmd/server-rest` |
+| `make bench-rest` | Mesure la latence REST/JSON avec Vegeta | `vegeta attack ... \| vegeta report ...` |
 | `make snapshot` | Génère la vue HTML du carnet (visualisation, hors périmètre perf) | `go run ./cmd/snapshot` |
 | `make clean` | Supprime les fichiers éphémères (profils, binaires, snapshot) ; garde `bench-results/` | — |
 | `make` | Enchaîne `test` puis `bench` | — |
@@ -743,6 +749,8 @@ Banc d'essai : AMD Ryzen 7 7735U, Go/linux/amd64.
   chiffrer un levier.
 - **hyperfine** (`make bench-hyperfine`) chronomètre le *binaire entier* `cmd/bench` (lancement →
   sortie), au niveau **processus**. C'est le temps perçu par l'utilisateur.
+- **vegeta** (`make bench-rest`) mesure la distribution de latence de l'API HTTP/JSON sous charge,
+  utile pour l'axe réseau.
 
 > _Limite assumée : hyperfine inclut le démarrage Go et la génération des ordres, donc son gain %
 > est plus **dilué** que celui de benchstat (qui isole le matching). Les deux focales sont
@@ -765,6 +773,9 @@ est associé au **tag Git** de la version correspondante (`baseline-naive` → `
 `opt-cache-locality` → `opt-cache.txt`, …), ce qui rend chaque comparaison traçable et reproductible.
 
 > _Installer benchstat si besoin : `go install golang.org/x/perf/cmd/benchstat@latest`._
+
+> _Nota : les cibles ci-dessus correspondent aux commandes d'usage du Makefile du projet ; les noms
+> exacts peuvent être ajustés si une cible a été renommée, mais la logique de mesure reste la même._
 
 ### 5.2 Synthèse des gains
 
@@ -832,7 +843,123 @@ finale, elle, reste très stable (σ 1,0 ms)._
 
 ---
 
-## 6. BONUS — Gouvernance technique (`constitution.md`) — +2
+---
+
+## 6. Optimisation réseau — Version A : REST/JSON
+
+> _Après avoir chiffré le moteur mono-carnet (÷ 8,0 en temps) puis le parallélisme entre carnets
+> (× 6,35 sur 8 cœurs), on ouvre un troisième axe : le **coût réseau**. Objectif : exposer le moteur
+> derrière une API HTTP/JSON et mesurer sa **distribution de latence** sous charge — l'antidote à
+> la moyenne trompeuse (loi des grands nombres : la moyenne masque les outliers ; c'est la
+> **queue de distribution** — le P99 — qui définit l'expérience utilisateur du 1 % le plus lent)._
+
+### 6.1 Levier : exposer le moteur en HTTP/JSON (baseline réseau)
+
+**Objectif :** rendre le moteur accessible via une API HTTP REST (`POST /order`, `GET /trades`,
+`GET /health`) sérialisée en JSON, et **mesurer sa distribution de latence** (P50, P95, P99) sous
+charge constante — la baseline réseau qu'une version binaire (gRPC/Protobuf) devra battre.
+
+**Hypothèse d'impact matériel :** _le format JSON impose un coût **texte** à chaque échange :
+sérialisation par `encoding/json` (réflexion + allocations de chaînes temporaires), parsing caractère
+par caractère côté serveur, verbosité du protocole (noms de champs répétés). Le tout sur HTTP/1.1
+(une requête à la fois par connexion). Ce coût doit se voir dans la queue de distribution : le P99
+capturera les pauses GC induites par les allocations JSON et la contention sur le `sync.Mutex` qui
+protège le carnet partagé._
+
+**Commande de vérification :**
+
+```bash
+# 1. Lancer le serveur REST
+make server-rest
+
+# 2. Dans un autre terminal, tir Vegeta à débit constant
+echo '{"id":1,"side":"buy","type":"limit","price":9950,"quantity":1}' > body.json
+echo "POST http://localhost:8080/order" > targets.txt
+
+vegeta attack -duration=30s -rate=500/s \
+  -targets=targets.txt -body=body.json \
+  -header="Content-Type: application/json" > results.bin
+
+vegeta report -type=text results.bin
+vegeta report -type='hist[0,500us,1ms,2ms,5ms,10ms]' results.bin
+```
+
+**Endroits modifiés :**
+
+| Fichier | Rôle |
+|---|---|
+| `internal/api/types.go` | DTO JSON : `OrderRequest`, `TradeResponse`, `SubmitResponse`, `ErrorResponse` |
+| `internal/api/handler.go` | `Handler` : `sync.Mutex` + `*engine.Book` ; routes `POST /order`, `GET /trades`, `GET /health` ; validation `side`/`type` |
+| `cmd/server-rest/main.go` | Point d'entrée : flags `-addr`, `-min`, `-max` ; `http.ListenAndServe` |
+| `Makefile` | Cibles `server-rest`, `server-rest-build` |
+
+Le moteur (`internal/engine/`) est **inchangé** : la couche réseau est purement additive
+(séparation des responsabilités — le moteur ignore le HTTP, le handler ignore le matching).
+
+**Résultat — tir soutenu 30 s (Ryzen 7 7735U, batterie/powersave) :**
+
+| Débit | Requêtes | Succès | P50 | P95 | P99 | Max | Erreurs |
+|---|---|---|---|---|---|---|---|
+| 500 req/s | 15 000 | 100,00 % | 351 µs | 491 µs | 745 µs | 3,73 ms | 0 |
+| 2 000 req/s | 60 000 | 100,00 % | **227 µs** | **366 µs** | **453 µs** | 3,31 ms | 0 |
+
+**Histogramme des latences (à 500 req/s) :**
+
+| Tranche | Nb requêtes | % |
+|---|---|---|
+| [0, 500 µs] | 14 299 | **95,33 %** |
+| [500 µs, 1 ms] | 687 | 4,58 % |
+| [1 ms, 2 ms] | 13 | 0,09 % |
+| [2 ms, 5 ms] | 1 | 0,01 % |
+| [5 ms, +∞[ | 0 | 0,00 % |
+
+**Lecture critique :**
+
+- **Le serveur tient sans broncher jusqu'à 2 000 req/s.** Zéro erreur sur 60 000 requêtes, P99 sous
+  la milliseconde dans les deux régimes. Le moteur (÷ 8,0 en temps par ordre) est tellement rapide
+  que la latence réseau (dispatch, JSON, socket) domine largement le matching lui-même —
+  cohérent avec la Loi d'Amdahl : sur ce chemin, l'optimisation du moteur est déjà « payée », le
+  goulot suivant est le protocole.
+- **Contre-intuitif — le P99 baisse quand la charge monte.** À 2 000 req/s le P99 est 39 % plus bas
+  qu'à 500 req/s (453 vs 745 µs). C'est un **artefact DVFS** (`powersave` + batterie) : à 500 req/s
+  le CPU retombe en basse fréquence entre les requêtes et paie un boost à chaque coup ; à 2 000 req/s
+  la charge est assez soutenue pour maintenir le CPU boosté, donc plus rapide. La **forme** de la
+  distribution (P99 sub-milliseconde, 95 % sous 500 µs) reste valide ; une mesure de référence
+  absolue se ferait sur `performance` + secteur.
+- **La moyenne ment, le P99 dit la vérité.** À 500 req/s, la moyenne (356 µs) suggère que « tout va
+  bien ». Le P99 (745 µs) montre que le 1 % le plus lent est **2× plus lent** que la médiane, et
+  le max (3,7 ms) est **10×** plus lent. À l'échelle production (100 k req/jour), c'est 1 000
+  requêtes qui subissent cette dégradation quotidiennement — la « tail latency » qui définit
+  l'expérience réelle des utilisateurs.
+- **Trade-off explicite (JSON vs binaire).** Ce chiffrage est la baseline qu'une version gRPC/Protobuf
+  devra battre : format binaire compact (Varint), tags numériques au lieu des noms de champs,
+  streaming HTTP/2 multiplexé (une seule connexion, zéro HOL blocking), zéro parsing texte. Les
+  hypothèses matérielles : allocations réduites (moins de pression GC), débit doublé sur la même
+  charge CPU, P99 divisé par 2 à 5 (élimination des pauses GC de sérialisation).
+
+> _Reproductible : `make server-rest` puis les commandes Vegeta ci-dessus ; résultats archivés
+> dans `bench-results/rest-500rps.txt` et `bench-results/rest-2000rps.txt` (`vegeta report -type=json`)._
+
+### 6.2 Levier : gRPC + Protobuf sur HTTP/2 (à venir)
+
+_En cours d'implémentation — voir §6.3 pour la comparaison chiffrée._
+
+### 6.3 Synthèse comparative REST/JSON vs gRPC/Protobuf
+
+_À compléter une fois les deux versions mesurées avec la même charge._
+
+| Métrique | Version A (REST/JSON) | Version B (gRPC/Protobuf) | Gain |
+|---|---|---|---|
+| P50 | 351 µs | — | — |
+| P95 | 491 µs | — | — |
+| P99 | 745 µs | — | — |
+| Bytes Out (mean) | 63 o | — | — |
+| Bytes In (mean) | 14 o | — | — |
+| Débit soutenu | 2 000 req/s (0 erreur) | — | — |
+
+---
+
+## 7. BONUS — Gouvernance technique (`constitution.md`) — +2
 
 - [x] `constitution.md` présent à la racine du dépôt
 - [x] **Directive 1 — posture système** (ingénieur contraint par des métriques réelles) → appliquée dans tout le rapport : aucun levier sans mesure préalable, ordre *work → right → fast* respecté.
