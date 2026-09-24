@@ -9,7 +9,7 @@ leviers → comparatif).
 
 > Ce README n'est pas le rapport d'audit. Celui-ci se trouve à la racine sous le nom `RAPPORT-AUDIT` (formats `.md` et `.pdf`).
 
-## Résultats (séances 1–4)
+## Résultats
 
 De la baseline naïve à la version optimisée, sur `BenchmarkMatching` (n = 200 000, benchstat n=10,
 AMD Ryzen 7 7735U) :
@@ -18,6 +18,10 @@ AMD Ryzen 7 7735U) :
 |---|---|---|---|
 | Temps | 77,75 ms | **9,67 ms** | **÷ 8,0** |
 | Allocations | 281 415 | **455** | **÷ 618** |
+
+À cela s'ajoutent deux axes indépendants :
+- **Parallélisme** — worker pool multi-symboles : **×6,35 débit** sur 8 cœurs.
+- **Réseau** — comparatif REST/JSON vs gRPC/Protobuf : **P99 −30 %** en gRPC à 500 req/s.
 
 Détails, mesures avant/après et analyse : [`RAPPORT-AUDIT.md`](./RAPPORT-AUDIT.md).
 
@@ -28,16 +32,19 @@ Détails, mesures avant/après et analyse : [`RAPPORT-AUDIT.md`](./RAPPORT-AUDIT
   meilleur prix, reliquat annulé).
 - Exécution partielle et traversée de plusieurs niveaux de prix.
 - Générateur de flux **reproductible** (même graine → même flux) pour des mesures rejouables.
+- **Worker pool multi-symboles** (parallélisme entre carnets indépendants).
 - **Visualisation HTML** du carnet (snapshot statique généré par le moteur).
+- **Serveurs d'exposition** REST/JSON et gRPC/Protobuf (streaming bidirectionnel défini).
 - Tests de correction et benchmarks (`go test`).
 
 ## Prérequis
 
 - Go ≥ 1.21 (utilise les fonctions intégrées `min`/`max`).
+- Pour la partie réseau : `protoc` (compilateur Protobuf) + plugins Go, `vegeta` (tir HTTP), `ghz` (tir gRPC).
 
 ## Démarrage rapide
 
-Tout passe par le `Makefile` (voir les cibles détaillées dans le fichier) :
+Tout passe par le `Makefile` :
 
 ```bash
 make test         # tests de correction (filet de sécurité)
@@ -52,7 +59,7 @@ La baseline chronométrée seule : `go run ./cmd/bench`.
 
 ## Visualisation (interface web)
 
-Le moteur peut produire une **vue HTML du carnet** — profondeur *bids* / *asks*, spread, et les
+Le moteur produit une **vue HTML du carnet** — profondeur *bids* / *asks*, spread, et les
 dernières transactions — générée à partir d'un vrai run :
 
 ```bash
@@ -62,56 +69,68 @@ xdg-open snapshot.html    # ou ouvrir le fichier dans un navigateur
 
 C'est un **snapshot statique** : une photo de l'état final du carnet, sans JavaScript. Le flux étant
 déterministe (graine fixe), l'image est reproductible d'un run à l'autre. Le fichier `snapshot.html`
-est une **sortie** (ignorée par git, régénérable à volonté). Une version **temps réel** (serveur +
-WebSocket) est prévue pour la séance J4 (réseau).
+est une **sortie** (ignorée par git, régénérable à volonté).
 
-## Structure (mise à jour)
+Pour un flux temps réel côté machine, le service gRPC `StreamOrders` (bidirectionnel HTTP/2) est
+défini dans `proto/order.proto` — c'est le protocole adapté au contexte HFT (le WebSocket, orienté
+navigateur, n'a pas sa place ici).
+
+## Serveurs d'exposition
+
+Deux serveurs exposent le moteur pour la comparaison de protocoles réseau :
+
+```bash
+make server-rest     # HTTP/JSON sur :8080 (POST /order, GET /trades, GET /health)
+make server-grpc     # gRPC/Protobuf sur :50051 (Submit unaire + StreamOrders bidi)
+make proto           # régénère les sources Protobuf/gRPC depuis proto/order.proto
+```
+
+Mesures de charge :
+
+```bash
+# REST via Vegeta
+vegeta attack -duration=30s -rate=500/s -targets=targets.txt -body=body.json \
+  -header="Content-Type: application/json" | vegeta report
+
+# gRPC via ghz
+ghz --insecure --proto=proto/order.proto \
+  --call=orderbook.v1.OrderBookService/Submit \
+  --data='{"id":1,"side":"SIDE_BUY","type":"ORDER_TYPE_LIMIT","price":9950,"quantity":1}' \
+  --duration=30s --rps=500 --concurrency=50 localhost:50051
+```
+
+## Structure
 
 ```
 orderbook-hft/
 ├── cmd/
-│   ├── bench/
-│   │   └── main.go                 # point d'entrée : lanceur chronométré (binaire ./ob)
-│   └── snapshot/
-│       ├── main.go                 # lance le moteur puis remplit le gabarit HTML
-│       └── snapshot.tmpl.html      # gabarit de la page (embarqué via //go:embed)
+│   ├── bench/                        # lanceur chronométré (binaire ./ob)
+│   ├── snapshot/                     # génération de la vue HTML du carnet
+│   ├── parallel/                     # worker pool multi-symboles
+│   ├── contention/                   # démo de contention mutex (échec constructif)
+│   ├── server-rest/                  # serveur HTTP/JSON
+│   └── server-grpc/                  # serveur gRPC/Protobuf
 ├── internal/
-│   ├── engine/                     # cœur du moteur
-│   │   ├── order.go                # types Order, Side, OrderType, Trade
-│   │   ├── book.go                 # Book indexé par tick + appariement prix-temps
-│   │   ├── pool*.go                # recyclage des carnets/structures (sync.Pool, séance J3)
-│   │   ├── snapshot.go             # photo en lecture seule du carnet (hors Hot Path)
-│   │   ├── book_test.go            # tests de correction (filet de sécurité)
-│   │   └── locality_test.go        # expérience de localité de cache (contigu vs dispersé)
-│   ├── engine_test/
-│   │   └── matching_bench_test.go  # BenchmarkMatching (boîte noire, 200 000 ordres)
-│   └── feed/
-│       └── generator.go            # générateur de flux d'ordres reproductible (graine fixe)
-├── (J3) concurrence/worker-pool*   # parallélisation du traitement (si activée dans la branche)
-├── (J4) réseau/persistance*        # API, transport, stockage, interface temps réel (en cours)
-├── bench-results/                  # benchmarks archivés par étape (entrées de benchstat)
-│   ├── baseline.txt
-│   ├── opt-cache.txt
-│   ├── opt-prealloc-trap.txt
-│   ├── opt-ticks.txt
-│   ├── opt-ticks-array.txt
-│   └── opt-zero-alloc.txt
-├── flamegraph-cpu.png              # flamegraph du profil CPU (goulot bestAsk/bestBid)
-├── hyperfine.md                    # mesure end-to-end du binaire (./ob vs ./ob_opti)
-├── snapshot.html                   # vue HTML du carnet — GÉNÉRÉE (ignorée par git)
-├── Makefile                        # test, bench, profile, save, compare, clean…
-├── constitution.md                 # règles de gouvernance technique (contraintes de perf)
-├── RAPPORT-AUDIT.md                # rapport d'audit de performance (démarche + mesures)
-├── .gitignore
-├── go.mod
+│   ├── engine/                       # cœur du moteur (order.go, book.go, snapshot.go, reset.go...)
+│   ├── engine_test/                  # BenchmarkMatching (boîte noire, 200 000 ordres)
+│   ├── feed/                         # générateur de flux d'ordres reproductible
+│   ├── api/                          # types + handler REST/JSON
+│   └── pb/                           # sources gRPC générées (order.pb.go, order_grpc.pb.go)
+├── proto/
+│   └── order.proto                   # contrat gRPC (messages + service)
+├── bench-results/                    # benchmarks archivés par tag
+│   ├── baseline.txt · opt-cache.txt · opt-ticks.txt · opt-ticks-array.txt
+│   ├── opt-zero-alloc.txt · opt-int32.txt · opt-prealloc-trap.txt
+│   ├── rest-500rps.txt · rest-2000rps.txt
+│   └── grpc-500rps.txt · grpc-2000rps.txt
+├── flamegraph-cpu.png                # profil CPU du goulot bestAsk/bestBid
+├── hyperfine.md                      # mesure end-to-end du binaire
+├── Makefile · constitution.md · RAPPORT-AUDIT.md · go.mod
 └── README.md
 ```
 
-> `*` Les noms exacts peuvent varier selon la branche/itération du cours ; se référer à l'arborescence
-> du dépôt pour le détail fichier par fichier.
-
 Les artefacts générés (`snapshot.html`, `cpu.prof`, `mem.prof`, `*.test`, `ob`, `ob_opti`) se
-génèrent via le `Makefile` ou `go run ./cmd/snapshot`, puis sont ignorés par git.
+régénèrent via le `Makefile` et sont ignorés par git.
 
 ## Concepts clés
 
@@ -127,8 +146,7 @@ go test ./...       # tests de correction
 ```
 
 Les tests couvrent : croisement simple, exécution partielle, traversée de plusieurs niveaux, et
-comportement des ordres MARKET. Ils servent de filet de sécurité : ils doivent rester verts après
-chaque optimisation.
+comportement des ordres MARKET. Ils servent de filet de sécurité : verts après chaque optimisation.
 
 ## État d'avancement
 
@@ -142,9 +160,14 @@ chaque optimisation.
 | Zéro-allocation (index de tête, recyclage des niveaux) | ✅ |
 | Prix `int32` (compacité `Order` 32→24 o, densité cache) | ✅ |
 | Visualisation HTML du carnet (snapshot statique) | ✅ |
-| Concurrence / worker pool (séance J3) — ×6,35 sur 8 cœurs | ✅ |
-| Recyclage des carnets (`sync.Pool`, séance J3) | ✅ |
-| Réseau + persistance + interface temps réel (séance J4) | ⬜ à venir |
+| Concurrence / worker pool — ×6,35 sur 8 cœurs | ✅ |
+| Recyclage des carnets (`sync.Pool`) | ✅ |
+| Profil de contention (échec constructif documenté) | ✅ |
+| Serveur REST/JSON + tir Vegeta (P50/P95/P99) | ✅ |
+| Serveur gRPC/Protobuf + tir ghz (P50/P95/P99) | ✅ |
+| Comparatif réseau REST vs gRPC (§7 du rapport) | ✅ |
+
+**Projet terminé.** Tous les leviers du programme sont implémentés, mesurés et documentés.
 
 ## Documentation
 
