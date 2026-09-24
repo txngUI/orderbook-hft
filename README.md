@@ -7,7 +7,7 @@ Le moteur ingère un flux d'ordres d'achat/vente et les apparie en temps réel p
 transactions, en servant de support à une démarche d'optimisation mesurée (baseline → profiling →
 leviers → comparatif).
 
-** Ce readme n'est pas le rapport d'audit, il se trouve à la racine sous le nom RAPPORT-AUDIT disponible en .dm et en pdf**
+> Ce README n'est pas le rapport d'audit. Celui-ci se trouve à la racine sous le nom `RAPPORT-AUDIT` (formats `.md` et `.pdf`).
 
 ## Résultats (séances 1–4)
 
@@ -37,7 +37,7 @@ Détails, mesures avant/après et analyse : [`RAPPORT-AUDIT.md`](./RAPPORT-AUDIT
 
 ## Démarrage rapide
 
-Tout passe par le `Makefile` (voir la cible détaillée dans le fichier) :
+Tout passe par le `Makefile` (voir les cibles détaillées dans le fichier) :
 
 ```bash
 make test         # tests de correction (filet de sécurité)
@@ -105,7 +105,7 @@ orderbook-hft/
 ```
 
 Les artefacts générés (`snapshot.html`, `cpu.prof`, `mem.prof`, `*.test`, `ob`, `ob_opti`) se
-régénèrent (via le `Makefile` ou `go run ./cmd/snapshot`) et sont ignorés par git.
+génèrent via le `Makefile` ou `go run ./cmd/snapshot`, puis sont ignorés par git.
 
 ## Concepts clés
 
