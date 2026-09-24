@@ -3,7 +3,7 @@
 #
 # Chemins : `./...` fonctionne que le projet soit à plat ou en cmd/ + internal/.
 
-.PHONY: all test vet align bench bench-cache profile bench-hyperfine save compare clean
+.PHONY: all help test vet align bench bench-cache profile bench-hyperfine save compare clean snapshot server-rest server-rest-build server-grpc server-grpc-build proto
 
 FIELDALIGN := $(shell go env GOPATH)/bin/fieldalignment
 RESULTS    := bench-results
@@ -12,6 +12,10 @@ BENCHPKG   := ./internal/engine_test
 
 ## all : vérifie la correction puis mesure le moteur.
 all: test bench
+
+## help : affiche cette aide.
+help:
+	@awk 'BEGIN {printf "Targets disponibles:\n\n"} /^##[[:space:]]/ {sub(/^##[[:space:]]?/, "", $$0); if (help) help = help " " $$0; else help = $$0; next} /^[A-Za-z0-9_.-]+:([^=].*)?$$/ {if (help != "") printf "  %-18s %s\n", $$1, help; help = ""}' $(MAKEFILE_LIST)
 
 ## test : tests de correction (doivent rester verts après chaque optimisation).
 test:
