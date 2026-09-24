@@ -65,7 +65,7 @@ déterministe (graine fixe), l'image est reproductible d'un run à l'autre. Le f
 est une **sortie** (ignorée par git, régénérable à volonté). Une version **temps réel** (serveur +
 WebSocket) est prévue pour la séance J4 (réseau).
 
-## Structure
+## Structure (mise à jour)
 
 ```
 orderbook-hft/
@@ -79,6 +79,7 @@ orderbook-hft/
 │   ├── engine/                     # cœur du moteur
 │   │   ├── order.go                # types Order, Side, OrderType, Trade
 │   │   ├── book.go                 # Book indexé par tick + appariement prix-temps
+│   │   ├── pool*.go                # recyclage des carnets/structures (sync.Pool, séance J3)
 │   │   ├── snapshot.go             # photo en lecture seule du carnet (hors Hot Path)
 │   │   ├── book_test.go            # tests de correction (filet de sécurité)
 │   │   └── locality_test.go        # expérience de localité de cache (contigu vs dispersé)
@@ -86,6 +87,8 @@ orderbook-hft/
 │   │   └── matching_bench_test.go  # BenchmarkMatching (boîte noire, 200 000 ordres)
 │   └── feed/
 │       └── generator.go            # générateur de flux d'ordres reproductible (graine fixe)
+├── (J3) concurrence/worker-pool*   # parallélisation du traitement (si activée dans la branche)
+├── (J4) réseau/persistance*        # API, transport, stockage, interface temps réel (en cours)
 ├── bench-results/                  # benchmarks archivés par étape (entrées de benchstat)
 │   ├── baseline.txt
 │   ├── opt-cache.txt
@@ -103,6 +106,9 @@ orderbook-hft/
 ├── go.mod
 └── README.md
 ```
+
+> `*` Les noms exacts peuvent varier selon la branche/itération du cours ; se référer à l'arborescence
+> du dépôt pour le détail fichier par fichier.
 
 Les artefacts générés (`snapshot.html`, `cpu.prof`, `mem.prof`, `*.test`, `ob`, `ob_opti`) se
 génèrent via le `Makefile` ou `go run ./cmd/snapshot`, puis sont ignorés par git.
